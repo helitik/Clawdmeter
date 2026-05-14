@@ -46,6 +46,7 @@ static lv_obj_t* clock_container = NULL;
 static lv_obj_t* clock_logo_canvas = NULL;
 static lv_obj_t* lbl_clock_time = NULL;
 static lv_obj_t* lbl_clock_date = NULL;
+static lv_obj_t* lbl_clock_msg = NULL;
 static splash_mini_state_t clock_logo_state;
 
 // Clock-sync state. epoch_at_sync is *already* timezone-shifted to local
@@ -277,6 +278,22 @@ static void init_clock_screen(lv_obj_t* scr) {
     lv_obj_set_style_text_color(lbl_clock_date, COL_DIM, 0);
     lv_obj_align(lbl_clock_date, LV_ALIGN_RIGHT_MID, -28, 32);
 
+    // Playful "Musing..." / "Vibing..." word under the Clawd, cycling in
+    // sync with the Usage screen's spinner message. The label centre is
+    // pinned to the canvas centre (x = 28 offset + half of 80 = 68), one
+    // line below the canvas bottom.
+    lbl_clock_msg = lv_label_create(clock_container);
+    {
+        char seed[40];
+        snprintf(seed, sizeof(seed), "%s ...", anim_messages[anim_msg_idx]);
+        lv_label_set_text(lbl_clock_msg, seed);
+    }
+    lv_obj_set_style_text_font(lbl_clock_msg, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_clock_msg, COL_ACCENT, 0);
+    lv_obj_set_style_text_align(lbl_clock_msg, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(lbl_clock_msg, LV_ALIGN_LEFT_MID, 68, 54);
+    lv_obj_set_style_translate_x(lbl_clock_msg, LV_PCT(-50), 0);
+
     lv_obj_add_flag(clock_container, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -392,22 +409,36 @@ void ui_tick_anim(void) {
         }
     }
 
+    // Advance the rotating "Musing..."/"Vibing..."/etc. message every 4 s
+    // regardless of which screen is up — Usage and Clock both display it,
+    // and we want them to stay in sync if the user cycles between them.
+    uint32_t lvt = lv_tick_get();
+    bool msg_changed = false;
+    if (lvt - anim_msg_start >= ANIM_MSG_MS) {
+        anim_msg_idx = (anim_msg_idx + 1) % ANIM_MSG_COUNT;
+        anim_msg_start = lvt;
+        msg_changed = true;
+    }
+
     // Clock screen tick: re-render time/date once per minute (gated by
-    // clock_last_render_min), advance the animated Clawd at the same time.
+    // clock_last_render_min), advance the animated Clawd, refresh the
+    // rotating word beneath the Clawd when it ticks.
     if (current_screen == SCREEN_CLOCK) {
         clock_render(false);
         if (clock_logo_canvas &&
             splash_mini_tick_scaled(&clock_logo_state, clock_logo_buf, CLOCK_LOGO_SCALE)) {
             lv_obj_invalidate(clock_logo_canvas);
         }
+        if (msg_changed && lbl_clock_msg) {
+            static char buf[40];
+            snprintf(buf, sizeof(buf), "%s ...", anim_messages[anim_msg_idx]);
+            lv_label_set_text(lbl_clock_msg, buf);
+        }
         return;
     }
 
     if (current_screen != SCREEN_USAGE) return;
-    uint32_t lvt = lv_tick_get();
-    if (lvt - anim_msg_start >= ANIM_MSG_MS) {
-        anim_msg_idx = (anim_msg_idx + 1) % ANIM_MSG_COUNT;
-        anim_msg_start = lvt;
+    if (msg_changed) {
         static char buf[40];
         snprintf(buf, sizeof(buf), "%s ...", anim_messages[anim_msg_idx]);
         lv_label_set_text(lbl_anim, buf);
