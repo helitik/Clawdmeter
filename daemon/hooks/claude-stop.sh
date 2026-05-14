@@ -37,6 +37,15 @@ PID_FILE="$HOME/.config/claude-usage-monitor/daemon.pid"
 # get the context size the model saw at that point.
 INPUT=$(cat 2>/dev/null)
 if [ -n "$INPUT" ] && command -v jq >/dev/null 2>&1; then
+    # Skip sub-agent stops — their transcript holds only the sub-agent's
+    # turn and would overwrite the main session's much-higher context
+    # figure with a tiny one (the symptom: bar jumps down right after a
+    # Task spawn). hook_event_name is "Stop" for the main agent and
+    # "SubagentStop" for Task children.
+    EVENT=$(echo "$INPUT" | jq -r '.hook_event_name // empty' 2>/dev/null)
+    if [ "$EVENT" = "SubagentStop" ]; then
+        exit 0
+    fi
     TRANSCRIPT=$(echo "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)
     if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
         TOKENS=$(jq -s '
