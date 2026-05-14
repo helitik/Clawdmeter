@@ -209,10 +209,11 @@ static void init_usage_screen(lv_obj_t* scr) {
 
     // Context-tokens indicator on the same baseline as lbl_anim, right side.
     // Populated by the Stop hook → daemon → BLE pipeline; stays blank until
-    // the first event arrives.
+    // the first event arrives. Slightly larger font (18 vs the 14 of the
+    // playful word) so the figure pops as the "main metric".
     lbl_context = lv_label_create(usage_container);
     lv_label_set_text(lbl_context, "");
-    lv_obj_set_style_text_font(lbl_context, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(lbl_context, &lv_font_montserrat_18, 0);
     lv_obj_set_style_text_color(lbl_context, COL_DIM, 0);
     lv_obj_align(lbl_context, LV_ALIGN_BOTTOM_RIGHT, -MARGIN, -2);
 }
