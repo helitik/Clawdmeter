@@ -141,12 +141,11 @@ void splash_init(lv_obj_t *parent) {
 
     canvas = lv_canvas_create(splash_container);
     lv_canvas_set_buffer(canvas, canvas_buf, CANVAS_W, CANVAS_H, LV_COLOR_FORMAT_RGB565);
-    // Bottom-align (vs. centered) gives more breathing room above the character.
-    // Some animations (e.g. the "dj" variants with overhead headphones) draw
-    // into row 0 of the 20×20 grid; centered placement made them sit flush
-    // against the top edge. Idle anims have an empty row 19, so anchoring the
-    // canvas to the screen bottom doesn't crowd the legs.
-    lv_obj_align(canvas, LV_ALIGN_BOTTOM_MID, 0, 0);
+    // Center the canvas in its container. On AMOLED the canvas (480×480) fills
+    // the screen so alignment is moot; on T-Display S3 portrait (170×320, canvas
+    // 160×160) centering gives equal breathing room above the dj-headphone
+    // rows and below the legs, vs. bottom-align which left the top half blank.
+    lv_obj_center(canvas);
 
     // Placeholder label (visible only when no animations are loaded)
     label_status = lv_label_create(splash_container);

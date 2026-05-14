@@ -18,7 +18,7 @@ Arduino_DataBus *bus = new Arduino_ESP32LCD8(
     LCD_D4, LCD_D5, LCD_D6, LCD_D7);
 
 Arduino_GFX *gfx = new Arduino_ST7789(
-    bus, LCD_RST, 1 /* rotation: 1 = landscape 320×170 */, true /* IPS */,
+    bus, LCD_RST, 2 /* rotation: 2 = portrait 170×320, USB connector at top */, true /* IPS */,
     LCD_NATIVE_W, LCD_NATIVE_H,
     LCD_COL_OFFSET, LCD_ROW_OFFSET, LCD_COL_OFFSET, LCD_ROW_OFFSET);
 

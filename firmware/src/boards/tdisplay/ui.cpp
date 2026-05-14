@@ -5,11 +5,12 @@
 #include <time.h>
 #include "theme.h"
 
-// 320×170 landscape layout. Uses LVGL's built-in Montserrat fonts and
-// FontAwesome symbol subset — no custom font_*.c files to regenerate.
+// 170×320 portrait layout (rotation 2, USB connector at top). Uses LVGL's
+// built-in Montserrat fonts and FontAwesome symbol subset — no custom
+// font_*.c files to regenerate.
 
-#define SCR_W      320
-#define SCR_H      170
+#define SCR_W      170
+#define SCR_H      320
 #define MARGIN     10
 
 #define COL_BG       THEME_BG
@@ -190,32 +191,33 @@ static void init_usage_screen(lv_obj_t* scr) {
     lv_obj_set_style_text_color(lbl_title, COL_TEXT, 0);
     lv_obj_set_pos(lbl_title, MARGIN + LOGO_SIZE + 6, 4);
 
-    // Session @ y=26 (label/pct/bar/reset total height ~50 px)
-    make_metric_row(usage_container, 26, "Session",
+    // Session @ y=44 — gives the title row + logo a bit of breathing space.
+    // Each metric block needs ~46 px (label + pct row, bar at +22, reset at +34).
+    make_metric_row(usage_container, 44, "Session",
                     &lbl_session_label, &lbl_session_pct,
                     &bar_session, &lbl_session_reset);
 
-    // Weekly @ y=84
-    make_metric_row(usage_container, 84, "Weekly",
+    // Weekly @ y=120 — leaves the lower third of the screen for the bottom
+    // message ribbon (context tokens + animated word).
+    make_metric_row(usage_container, 120, "Weekly",
                     &lbl_weekly_label, &lbl_weekly_pct,
                     &bar_weekly, &lbl_weekly_reset);
 
-    // Bottom message ribbon
+    // Bottom message ribbon — centered stack in portrait. Animated word
+    // above, context-token figure below as the main metric (bigger font).
     lbl_anim = lv_label_create(usage_container);
     lv_label_set_text(lbl_anim, "");
     lv_obj_set_style_text_font(lbl_anim, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(lbl_anim, COL_ACCENT, 0);
-    lv_obj_align(lbl_anim, LV_ALIGN_BOTTOM_LEFT, MARGIN, -2);
+    lv_obj_set_style_text_align(lbl_anim, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(lbl_anim, LV_ALIGN_BOTTOM_MID, 0, -34);
 
-    // Context-tokens indicator on the same baseline as lbl_anim, right side.
-    // Populated by the Stop hook → daemon → BLE pipeline; stays blank until
-    // the first event arrives. Slightly larger font (18 vs the 14 of the
-    // playful word) so the figure pops as the "main metric".
     lbl_context = lv_label_create(usage_container);
     lv_label_set_text(lbl_context, "");
     lv_obj_set_style_text_font(lbl_context, &lv_font_montserrat_18, 0);
     lv_obj_set_style_text_color(lbl_context, COL_DIM, 0);
-    lv_obj_align(lbl_context, LV_ALIGN_BOTTOM_RIGHT, -MARGIN, -2);
+    lv_obj_set_style_text_align(lbl_context, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(lbl_context, LV_ALIGN_BOTTOM_MID, 0, -8);
 }
 
 static void init_bluetooth_screen(lv_obj_t* scr) {
@@ -237,19 +239,26 @@ static void init_bluetooth_screen(lv_obj_t* scr) {
     lv_label_set_text(lbl_ble_status, "Initializing...");
     lv_obj_set_style_text_font(lbl_ble_status, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(lbl_ble_status, COL_DIM, 0);
-    lv_obj_set_pos(lbl_ble_status, MARGIN, 30);
+    lv_obj_set_pos(lbl_ble_status, MARGIN, 50);
 
+    // Device + MAC labels wrap their values to a second line — at 170 px wide
+    // a full MAC string "AA:BB:CC:DD:EE:FF" in Montserrat 12 won't fit on the
+    // same row as the "MAC: " prefix, so we let it wrap naturally.
     lbl_ble_device = lv_label_create(ble_container);
     lv_label_set_text(lbl_ble_device, "Device: ---");
     lv_obj_set_style_text_font(lbl_ble_device, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(lbl_ble_device, COL_DIM, 0);
-    lv_obj_set_pos(lbl_ble_device, MARGIN, 64);
+    lv_obj_set_pos(lbl_ble_device, MARGIN, 120);
+    lv_obj_set_width(lbl_ble_device, SCR_W - 2 * MARGIN);
+    lv_label_set_long_mode(lbl_ble_device, LV_LABEL_LONG_WRAP);
 
     lbl_ble_mac = lv_label_create(ble_container);
     lv_label_set_text(lbl_ble_mac, "MAC: ---");
     lv_obj_set_style_text_font(lbl_ble_mac, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(lbl_ble_mac, COL_DIM, 0);
-    lv_obj_set_pos(lbl_ble_mac, MARGIN, 82);
+    lv_obj_set_pos(lbl_ble_mac, MARGIN, 170);
+    lv_obj_set_width(lbl_ble_mac, SCR_W - 2 * MARGIN);
+    lv_label_set_long_mode(lbl_ble_mac, LV_LABEL_LONG_WRAP);
 
     lv_obj_add_flag(ble_container, LV_OBJ_FLAG_HIDDEN);
 }
@@ -263,36 +272,33 @@ static void init_clock_screen(lv_obj_t* scr) {
     lv_obj_set_style_pad_all(clock_container, 0, 0);
     lv_obj_clear_flag(clock_container, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Animated Clawd at 4× upscale (80×80), centered vertically. Positioned
-    // so that Clawd + the time digits form a roughly-centered group on the
-    // 320 px wide screen (≈42 px outer margin on either side).
+    // Portrait layout: Clawd up top, big time below, date, then animated
+    // word at the bottom — vertically stacked and horizontally centered.
     clock_logo_canvas = lv_canvas_create(clock_container);
     lv_canvas_set_buffer(clock_logo_canvas, clock_logo_buf,
                          CLOCK_LOGO_SIZE, CLOCK_LOGO_SIZE, LV_COLOR_FORMAT_RGB565);
     splash_mini_init_scaled(&clock_logo_state, 0, clock_logo_buf, CLOCK_LOGO_SCALE);
-    lv_obj_align(clock_logo_canvas, LV_ALIGN_LEFT_MID, 28, 0);
+    lv_obj_align(clock_logo_canvas, LV_ALIGN_TOP_MID, 0, 24);
 
-    // Big HH:MM next to Clawd. Y-offset shifts the time down slightly so
-    // its visual centre aligns with Clawd's visible body (Clawd's head sits
-    // near the top of its 80×80 canvas, so the body's optical centre is
-    // below the canvas midpoint).
+    // Big HH:MM directly under Clawd. The 48 px font is ~50 px tall, so the
+    // baseline ends near y=180 — leaves room for the date strip below.
     lbl_clock_time = lv_label_create(clock_container);
     lv_label_set_text(lbl_clock_time, "--:--");
     lv_obj_set_style_text_font(lbl_clock_time, &lv_font_montserrat_48, 0);
     lv_obj_set_style_text_color(lbl_clock_time, COL_TEXT, 0);
-    lv_obj_align(lbl_clock_time, LV_ALIGN_RIGHT_MID, -28, -10);
+    lv_obj_set_style_text_align(lbl_clock_time, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(lbl_clock_time, LV_ALIGN_TOP_MID, 0, 130);
 
-    // Date underneath the time, right-aligned to match.
+    // Date strip under the time.
     lbl_clock_date = lv_label_create(clock_container);
     lv_label_set_text(lbl_clock_date, "");
     lv_obj_set_style_text_font(lbl_clock_date, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(lbl_clock_date, COL_DIM, 0);
-    lv_obj_align(lbl_clock_date, LV_ALIGN_RIGHT_MID, -28, 32);
+    lv_obj_set_style_text_align(lbl_clock_date, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(lbl_clock_date, LV_ALIGN_TOP_MID, 0, 198);
 
-    // Playful "Musing..." / "Vibing..." word under the Clawd, cycling in
-    // sync with the Usage screen's spinner message. The label centre is
-    // pinned to the canvas centre (x = 28 offset + half of 80 = 68), one
-    // line below the canvas bottom.
+    // Playful "Musing..." / "Vibing..." word at the bottom, cycling in sync
+    // with the Usage screen's spinner message.
     lbl_clock_msg = lv_label_create(clock_container);
     {
         char seed[40];
@@ -302,8 +308,7 @@ static void init_clock_screen(lv_obj_t* scr) {
     lv_obj_set_style_text_font(lbl_clock_msg, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(lbl_clock_msg, COL_ACCENT, 0);
     lv_obj_set_style_text_align(lbl_clock_msg, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(lbl_clock_msg, LV_ALIGN_LEFT_MID, 68, 54);
-    lv_obj_set_style_translate_x(lbl_clock_msg, LV_PCT(-50), 0);
+    lv_obj_align(lbl_clock_msg, LV_ALIGN_BOTTOM_MID, 0, -16);
 
     lv_obj_add_flag(clock_container, LV_OBJ_FLAG_HIDDEN);
 }
