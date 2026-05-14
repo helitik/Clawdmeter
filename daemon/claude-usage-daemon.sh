@@ -13,8 +13,13 @@ POLL_INTERVAL=60
 TICK=5
 SAVED_MAC_FILE="$HOME/.config/claude-usage-monitor/ble-address"
 REFRESH_FLAG="/tmp/claude-usage-refresh-$$"
+# Daemon PID is published here so the Claude Code Stop hook can signal us
+# (SIGUSR1) to push a celebration event to the device with sub-second
+# latency. See daemon/hooks/claude-stop.sh.
+PID_FILE="$HOME/.config/claude-usage-monitor/daemon.pid"
 DBUS_DEST="org.bluez"
 NOTIFY_PID=""
+STOP_EVENT=0
 
 log() {
     echo "[$(date '+%H:%M:%S')] $1"
@@ -238,14 +243,26 @@ poll() {
 
 cleanup() {
     stop_notify_subscriber
+    rm -f "$PID_FILE"
     log "Daemon stopped"
     exit 0
 }
 
+# SIGUSR1 → STOP_EVENT=1. The signal also interrupts a pending `sleep TICK`
+# so the inner loop falls through to the event handler within milliseconds.
+handle_stop_event() {
+    STOP_EVENT=1
+}
+
 trap cleanup INT TERM
+trap handle_stop_event USR1
+
+mkdir -p "$(dirname "$PID_FILE")"
+echo $$ > "$PID_FILE"
 
 log "=== Claude Usage Tracker Daemon (BLE) ==="
 log "Poll interval: ${POLL_INTERVAL}s"
+log "PID file: $PID_FILE"
 
 BACKOFF=1
 
@@ -288,6 +305,11 @@ while true; do
     LAST_POLL=0
     while is_connected; do
         NOW=$(date +%s)
+        if [ "$STOP_EVENT" = "1" ]; then
+            STOP_EVENT=0
+            log "Stop hook fired -> celebration event"
+            write_gatt "$RX_CHAR_PATH" '{"e":"done"}' || log "Event write failed"
+        fi
         if [ -f "$REFRESH_FLAG" ] || (( NOW - LAST_POLL >= POLL_INTERVAL )); then
             if [ -f "$REFRESH_FLAG" ]; then
                 log "Refresh requested by device"

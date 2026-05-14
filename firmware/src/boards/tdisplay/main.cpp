@@ -47,21 +47,47 @@ static void my_flush_cb(lv_display_t* disp, const lv_area_t* area, uint8_t* px_m
     lv_display_flush_ready(disp);
 }
 
-static bool parse_json(const char* json, UsageData* out) {
+// Dispatch an inbound BLE payload. Two shapes are accepted:
+//   - usage:  {"s":..,"sr":..,"w":..,"wr":..,"st":"...","ok":true}
+//   - event:  {"e":"done"}   ← Claude Code Stop-hook signal
+// Events fire side-effects (e.g. celebration animation) without touching
+// the cached UsageData. ACK is sent either way for a parseable payload.
+static void on_ble_data(const char* json) {
     JsonDocument doc;
     DeserializationError err = deserializeJson(doc, json);
     if (err) {
         Serial.printf("JSON parse error: %s\n", err.c_str());
-        return false;
+        ble_send_nack();
+        return;
     }
-    out->session_pct = doc["s"] | 0.0f;
-    out->session_reset_mins = doc["sr"] | -1;
-    out->weekly_pct = doc["w"] | 0.0f;
-    out->weekly_reset_mins = doc["wr"] | -1;
-    strlcpy(out->status, doc["st"] | "unknown", sizeof(out->status));
-    out->ok = doc["ok"] | false;
-    out->valid = true;
-    return true;
+
+    const char* event = doc["e"] | (const char*)nullptr;
+    if (event && *event) {
+        Serial.printf("event: %s\n", event);
+        if (strcmp(event, "done") == 0) {
+            ui_celebrate();
+        }
+        ble_send_ack();
+        return;
+    }
+
+    usage.session_pct = doc["s"] | 0.0f;
+    usage.session_reset_mins = doc["sr"] | -1;
+    usage.weekly_pct = doc["w"] | 0.0f;
+    usage.weekly_reset_mins = doc["wr"] | -1;
+    strlcpy(usage.status, doc["st"] | "unknown", sizeof(usage.status));
+    usage.ok = doc["ok"] | false;
+    usage.valid = true;
+
+    int g_before = usage_rate_group();
+    usage_rate_sample(usage.session_pct);
+    int g_after = usage_rate_group();
+    if (g_after != g_before && splash_is_active()) {
+        splash_pick_for_current_rate();
+    }
+    Serial.printf("usage: s=%.1f%%, w=%.1f%%\n", usage.session_pct, usage.weekly_pct);
+    ui_update(&usage);
+    ble_send_ack();
 }
 
 // ---- Serial screenshot command (mirrors AMOLED build) ----
@@ -225,21 +251,9 @@ void loop() {
         ui_update_battery(pct, charging);
     }
 
-    // Incoming JSON from daemon
+    // Incoming JSON from daemon (usage payload or event)
     if (ble_has_data()) {
-        if (parse_json(ble_get_data(), &usage)) {
-            int g_before = usage_rate_group();
-            usage_rate_sample(usage.session_pct);
-            int g_after = usage_rate_group();
-            if (g_after != g_before && splash_is_active()) {
-                splash_pick_for_current_rate();
-            }
-            Serial.printf("usage: s=%.1f%%, w=%.1f%%\n", usage.session_pct, usage.weekly_pct);
-            ui_update(&usage);
-            ble_send_ack();
-        } else {
-            ble_send_nack();
-        }
+        on_ble_data(ble_get_data());
     }
 
     check_serial_cmd();

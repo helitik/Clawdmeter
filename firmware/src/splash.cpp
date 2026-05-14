@@ -54,6 +54,32 @@ static const char* GROUP_NAMES[GROUP_COUNT][GROUP_MAX] = {
     { "dance bounce dj", "dance sway dj", "dance djmix", NULL },
 };
 
+// Celebration pool — picked at random by splash_play_celebration() when the
+// host signals that Claude finished responding. Energetic dance/surprise
+// animations to make the device feel alive at the moment of attention.
+#define CELEBRATION_MAX 5
+static const char* CELEBRATION_NAMES[CELEBRATION_MAX] = {
+    "dance bounce dj", "dance sway dj", "dance djmix",
+    "expression surprise", "dance bounce",
+};
+static int8_t  celebration_pool[CELEBRATION_MAX];
+static uint8_t celebration_pool_size = 0;
+
+static void resolve_celebration_pool(void) {
+    celebration_pool_size = 0;
+    for (int s = 0; s < CELEBRATION_MAX; s++) {
+        celebration_pool[s] = -1;
+        const char* want = CELEBRATION_NAMES[s];
+        if (!want) continue;
+        for (int i = 0; i < SPLASH_ANIM_COUNT; i++) {
+            if (strcmp(splash_anims[i].name, want) == 0) {
+                celebration_pool[celebration_pool_size++] = (int8_t)i;
+                break;
+            }
+        }
+    }
+}
+
 static void resolve_group_lists(void) {
     for (int g = 0; g < GROUP_COUNT; g++) {
         group_size[g] = 0;
@@ -129,6 +155,7 @@ void splash_init(lv_obj_t *parent) {
     lv_obj_center(label_status);
 
     resolve_group_lists();
+    resolve_celebration_pool();
 
     if (SPLASH_ANIM_COUNT == 0) {
         show_placeholder();
@@ -206,6 +233,25 @@ void splash_hide(void) {
 
 lv_obj_t* splash_get_root(void) {
     return splash_container;
+}
+
+void splash_play_celebration(void) {
+    if (SPLASH_ANIM_COUNT == 0 || celebration_pool_size == 0) return;
+    uint32_t r = millis() ^ (millis() >> 16);
+    uint8_t slot = (uint8_t)(r % celebration_pool_size);
+    int8_t idx = celebration_pool[slot];
+    if (idx < 0) return;
+    cur_anim = (uint16_t)idx;
+    cur_frame = 0;
+    frame_started_ms = millis();
+    // Push the rate-rotate deadline far enough that the celebration won't
+    // be interrupted by the auto-cycle in splash_tick().
+    last_pick_ms = frame_started_ms;
+    const splash_anim_def_t *a = &splash_anims[cur_anim];
+    render_frame(a->frames[0], a->palette);
+    if (splash_container) lv_obj_clear_flag(splash_container, LV_OBJ_FLAG_HIDDEN);
+    active = true;
+    Serial.printf("splash: celebration -> %s\n", a->name);
 }
 
 static void render_frame_into(const splash_anim_def_t *a, uint16_t frame, uint16_t *out) {

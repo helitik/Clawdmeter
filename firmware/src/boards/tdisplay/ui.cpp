@@ -55,6 +55,12 @@ static lv_obj_t* battery_lbl = NULL;
 static screen_t current_screen = SCREEN_USAGE;
 static screen_t prev_non_splash_screen = SCREEN_USAGE;
 
+// Celebration state — set non-zero while a Stop-hook-triggered splash is on
+// screen; checked from ui_tick_anim() to auto-return to the prior screen.
+#define CELEBRATION_DURATION_MS 6000
+static screen_t pre_celebration_screen = SCREEN_USAGE;
+static uint32_t celebration_end_ms = 0;
+
 // ---- Animated message (Claude Code style — message rotates every 4 s) ----
 static uint32_t anim_msg_start = 0;
 static uint8_t  anim_msg_idx = 0;
@@ -249,6 +255,13 @@ void ui_update(const UsageData* data) {
 }
 
 void ui_tick_anim(void) {
+    // Auto-dismiss celebration splash. Done first so the usage-screen
+    // animations resume immediately after the return.
+    if (celebration_end_ms && lv_tick_get() >= celebration_end_ms) {
+        celebration_end_ms = 0;
+        ui_show_screen(pre_celebration_screen);
+    }
+
     if (current_screen != SCREEN_USAGE) return;
     uint32_t now = lv_tick_get();
     if (now - anim_msg_start >= ANIM_MSG_MS) {
@@ -301,6 +314,22 @@ void ui_cycle_screen(void) {
 void ui_toggle_splash(void) {
     if (current_screen == SCREEN_SPLASH) ui_show_screen(prev_non_splash_screen);
     else                                  ui_show_screen(SCREEN_SPLASH);
+}
+
+void ui_celebrate(void) {
+    // If a celebration is already on screen, extend its lifetime. Otherwise
+    // capture the screen we'll restore to when the timer fires.
+    if (celebration_end_ms == 0) {
+        pre_celebration_screen = (current_screen == SCREEN_SPLASH)
+                                     ? prev_non_splash_screen
+                                     : current_screen;
+        lv_obj_add_flag(usage_container, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(ble_container, LV_OBJ_FLAG_HIDDEN);
+        current_screen = SCREEN_SPLASH;
+        apply_battery_visibility();
+    }
+    splash_play_celebration();
+    celebration_end_ms = lv_tick_get() + CELEBRATION_DURATION_MS;
 }
 
 screen_t ui_get_current_screen(void) {

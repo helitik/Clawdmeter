@@ -18,3 +18,8 @@ void ui_toggle_splash(void);
 screen_t ui_get_current_screen(void);
 void ui_update_ble_status(ble_state_t state, const char* name, const char* mac);
 void ui_update_battery(int percent, bool charging);
+
+// Show a brief celebration animation (random pick from splash module's
+// celebration pool) then return to whichever screen was visible before.
+// Re-triggering while a celebration is already on screen extends the timer.
+void ui_celebrate(void);

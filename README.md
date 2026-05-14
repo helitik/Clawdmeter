@@ -87,6 +87,40 @@ View logs: `journalctl --user -u claude-usage-daemon -f`
 6. The firmware also tracks the rate of change of session % over a 5-minute window and picks splash animations from the matching mood group.
 7. The two side buttons are independent of all of this — they send Space and Shift+Tab as BLE HID keyboard input to the paired host directly.
 
+## Celebration on prompt-ready (optional)
+
+When Claude Code finishes responding it can fire a celebration animation
+on the device — a random energetic Clawd dance for ~6 seconds, then
+auto-return to whatever screen was visible before.
+
+Wire it up by adding a `Stop` hook to `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/absolute/path/to/Clawdmeter/daemon/hooks/claude-stop.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
+The hook is a tiny shell script that sends `SIGUSR1` to the running
+daemon; the daemon then writes a `{"e":"done"}` event over BLE and the
+firmware plays the animation. Sub-second latency end to end. No-op if
+the daemon isn't running.
+
+> Currently wired on the `tdisplay_s3` firmware only; the AMOLED build
+> has a no-op stub for `ui_celebrate()`.
+
 ## Physical buttons
 
 The board has three side buttons. Left and right do the same thing on every screen; the middle button is screen-aware.

@@ -21,6 +21,11 @@ void splash_hide(void);
 // trigger a re-pick when the rate group changes mid-display.
 void splash_pick_for_current_rate(void);
 
+// Switch to a random energetic animation from the celebration pool and
+// show the splash overlay. ui_celebrate() owns the timing — splash is
+// purely the animation pick + canvas reveal.
+void splash_play_celebration(void);
+
 // True when splash is currently rendering (used to gate re-picks).
 bool splash_is_active(void);
 

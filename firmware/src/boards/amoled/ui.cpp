@@ -561,3 +561,11 @@ void ui_update_battery(int percent, bool charging) {
     lv_image_set_src(battery_img, &battery_dscs[idx]);
     apply_battery_visibility();
 }
+
+void ui_celebrate(void) {
+    // No-op on AMOLED for now. The Stop-hook → celebration flow is only
+    // wired on the T-Display S3 firmware. Implementing it here is a matter
+    // of mirroring boards/tdisplay/ui.cpp's celebration_end_ms / pre-
+    // _celebration_screen state machine — kept out of scope for the
+    // initial feature shipment.
+}
