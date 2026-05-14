@@ -154,23 +154,49 @@ static void my_touch_cb(lv_indev_t* indev, lv_indev_data_t* data) {
     }
 }
 
-// Parse a JSON line into UsageData
-static bool parse_json(const char* json, UsageData* out) {
+// Dispatch an inbound BLE payload. Two shapes are accepted:
+//   - usage:  {"s":..,"sr":..,"w":..,"wr":..,"st":"...","ok":true}
+//   - event:  {"e":"done"}   ← Claude Code Stop-hook signal
+// Events fire side-effects (ui_celebrate, no-op on AMOLED for now) without
+// touching the cached UsageData. Without this dispatch, an event payload
+// would parse as an all-zero usage update and blank the dashboard.
+static void on_ble_data(const char* json) {
     JsonDocument doc;
     DeserializationError err = deserializeJson(doc, json);
     if (err) {
         Serial.printf("JSON parse error: %s\n", err.c_str());
-        return false;
+        ble_send_nack();
+        return;
     }
 
-    out->session_pct = doc["s"] | 0.0f;
-    out->session_reset_mins = doc["sr"] | -1;
-    out->weekly_pct = doc["w"] | 0.0f;
-    out->weekly_reset_mins = doc["wr"] | -1;
-    strlcpy(out->status, doc["st"] | "unknown", sizeof(out->status));
-    out->ok = doc["ok"] | false;
-    out->valid = true;
-    return true;
+    const char* event = doc["e"] | (const char*)nullptr;
+    if (event && *event) {
+        Serial.printf("event: %s\n", event);
+        if (strcmp(event, "done") == 0) {
+            ui_celebrate();
+        }
+        ble_send_ack();
+        return;
+    }
+
+    usage.session_pct = doc["s"] | 0.0f;
+    usage.session_reset_mins = doc["sr"] | -1;
+    usage.weekly_pct = doc["w"] | 0.0f;
+    usage.weekly_reset_mins = doc["wr"] | -1;
+    strlcpy(usage.status, doc["st"] | "unknown", sizeof(usage.status));
+    usage.ok = doc["ok"] | false;
+    usage.valid = true;
+
+    int g_before = usage_rate_group();
+    usage_rate_sample(usage.session_pct);
+    int g_after = usage_rate_group();
+    if (g_after != g_before) {
+        Serial.printf("usage rate: group %d -> %d (s=%.2f%%)\n",
+            g_before, g_after, usage.session_pct);
+        if (splash_is_active()) splash_pick_for_current_rate();
+    }
+    ui_update(&usage);
+    ble_send_ack();
 }
 
 // Serial command buffer
@@ -388,22 +414,9 @@ void loop() {
     // Check for serial commands (screenshot, etc.)
     check_serial_cmd();
 
-    // Process incoming BLE data
+    // Process incoming BLE data (usage payload or event)
     if (ble_has_data()) {
-        if (parse_json(ble_get_data(), &usage)) {
-            int g_before = usage_rate_group();
-            usage_rate_sample(usage.session_pct);
-            int g_after = usage_rate_group();
-            if (g_after != g_before) {
-                Serial.printf("usage rate: group %d -> %d (s=%.2f%%)\n",
-                    g_before, g_after, usage.session_pct);
-                if (splash_is_active()) splash_pick_for_current_rate();
-            }
-            ui_update(&usage);
-            ble_send_ack();
-        } else {
-            ble_send_nack();
-        }
+        on_ble_data(ble_get_data());
     }
 
     delay(5);
