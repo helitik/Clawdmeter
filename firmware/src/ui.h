@@ -33,3 +33,9 @@ void ui_set_clock_time(uint32_t epoch_seconds, int tz_offset_min);
 // Mark that the user is actively coding so the idle-switch timer resets.
 // Called on Stop hook events and when rate-group climbs above idle.
 void ui_note_activity(void);
+
+// Update the on-screen indicator showing how many tokens are currently in
+// Claude Code's context window. Driven by the Stop hook, which reads the
+// session transcript and sums the latest turn's input + cache_creation +
+// cache_read counters.
+void ui_set_context_tokens(uint32_t tokens);

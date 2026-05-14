@@ -61,9 +61,13 @@ static void on_ble_data(const char* json) {
         return;
     }
 
+    // Optional context-token count piggy-backed on any payload.
+    uint32_t ctx_tokens = doc["c"] | (uint32_t)0;
+    if (ctx_tokens > 0) ui_set_context_tokens(ctx_tokens);
+
     const char* event = doc["e"] | (const char*)nullptr;
     if (event && *event) {
-        Serial.printf("event: %s\n", event);
+        Serial.printf("event: %s c=%lu\n", event, (unsigned long)ctx_tokens);
         if (strcmp(event, "done") == 0) {
             ui_note_activity();   // Stop hook fired → user is actively coding
             ui_celebrate();

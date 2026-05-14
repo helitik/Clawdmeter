@@ -34,6 +34,7 @@ static lv_obj_t* lbl_weekly_pct;
 static lv_obj_t* bar_weekly;
 static lv_obj_t* lbl_weekly_reset;
 static lv_obj_t* lbl_anim;
+static lv_obj_t* lbl_context = NULL;
 
 // ---- Bluetooth screen widgets ----
 static lv_obj_t* ble_container;
@@ -205,6 +206,15 @@ static void init_usage_screen(lv_obj_t* scr) {
     lv_obj_set_style_text_font(lbl_anim, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(lbl_anim, COL_ACCENT, 0);
     lv_obj_align(lbl_anim, LV_ALIGN_BOTTOM_LEFT, MARGIN, -2);
+
+    // Context-tokens indicator on the same baseline as lbl_anim, right side.
+    // Populated by the Stop hook → daemon → BLE pipeline; stays blank until
+    // the first event arrives.
+    lbl_context = lv_label_create(usage_container);
+    lv_label_set_text(lbl_context, "");
+    lv_obj_set_style_text_font(lbl_context, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(lbl_context, COL_DIM, 0);
+    lv_obj_align(lbl_context, LV_ALIGN_BOTTOM_RIGHT, -MARGIN, -2);
 }
 
 static void init_bluetooth_screen(lv_obj_t* scr) {
@@ -343,6 +353,18 @@ void ui_set_clock_time(uint32_t epoch_seconds, int tz_offset_min) {
 
 void ui_note_activity(void) {
     last_activity_ms = millis();
+}
+
+void ui_set_context_tokens(uint32_t tokens) {
+    if (!lbl_context) return;
+    char buf[16];
+    if (tokens >= 1000) {
+        // "84k", "551k" — readable at a glance, model-agnostic.
+        snprintf(buf, sizeof(buf), "%luk", (unsigned long)(tokens / 1000));
+    } else {
+        snprintf(buf, sizeof(buf), "%lu", (unsigned long)tokens);
+    }
+    lv_label_set_text(lbl_context, buf);
 }
 
 void ui_init(void) {

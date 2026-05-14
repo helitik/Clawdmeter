@@ -13,6 +13,10 @@ POLL_INTERVAL=60
 TICK=5
 SAVED_MAC_FILE="$HOME/.config/claude-usage-monitor/ble-address"
 REFRESH_FLAG="/tmp/claude-usage-refresh-$$"
+# The Stop hook script writes the latest assistant turn's context token
+# count here right before signalling us. We read + clear it on USR1 so
+# the BLE event payload can include the value alongside "e":"done".
+CONTEXT_FILE="/tmp/clawdmeter-context.txt"
 # Daemon PID is published here so the Claude Code Stop hook can signal us
 # (SIGUSR1) to push a celebration event to the device with sub-second
 # latency. See daemon/hooks/claude-stop.sh.
@@ -342,8 +346,16 @@ while true; do
         NOW=$(date +%s)
         if [ "$STOP_EVENT" = "1" ]; then
             STOP_EVENT=0
-            log "Stop hook fired -> celebration event"
-            write_gatt "$RX_CHAR_PATH" '{"e":"done"}' || log "Event write failed"
+            CTX_PAYLOAD='{"e":"done"}'
+            if [ -f "$CONTEXT_FILE" ]; then
+                CTX=$(cat "$CONTEXT_FILE" 2>/dev/null | tr -dc '0-9')
+                rm -f "$CONTEXT_FILE"
+                if [ -n "$CTX" ] && [ "$CTX" -gt 0 ] 2>/dev/null; then
+                    CTX_PAYLOAD="{\"e\":\"done\",\"c\":$CTX}"
+                fi
+            fi
+            log "Stop hook fired -> $CTX_PAYLOAD"
+            write_gatt "$RX_CHAR_PATH" "$CTX_PAYLOAD" || log "Event write failed"
         fi
         if [ -f "$REFRESH_FLAG" ] || (( NOW - LAST_POLL >= POLL_INTERVAL )); then
             if [ -f "$REFRESH_FLAG" ]; then

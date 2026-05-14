@@ -581,3 +581,10 @@ void ui_set_clock_time(uint32_t epoch_seconds, int tz_offset_min) {
 void ui_note_activity(void) {
     // No-op on AMOLED — no idle auto-switch to a Clock screen here.
 }
+
+void ui_set_context_tokens(uint32_t tokens) {
+    // No-op on AMOLED — the context indicator is wired only on the
+    // T-Display S3 build for now. Drop in a label here later if you want
+    // to mirror it; the daemon already includes the value in payloads.
+    (void)tokens;
+}
