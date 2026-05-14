@@ -11,7 +11,19 @@ trap "rm -f '$TMPRAW' '$TMPDIM'" EXIT
 
 echo "Taking screenshot from $PORT..."
 
-python3 - "$PORT" "$TMPRAW" "$TMPDIM" << 'PYEOF'
+# Pick a Python with pyserial available. Prefer the system one; fall back to
+# the python shipped with PlatformIO's venv (which bundles pyserial).
+PY=python3
+if ! python3 -c "import serial" 2>/dev/null; then
+    if [ -x "$HOME/.platformio/penv/bin/python" ] && "$HOME/.platformio/penv/bin/python" -c "import serial" 2>/dev/null; then
+        PY="$HOME/.platformio/penv/bin/python"
+    else
+        echo "Error: pyserial not available. Install with: sudo apt install python3-serial" >&2
+        exit 1
+    fi
+fi
+
+"$PY" - "$PORT" "$TMPRAW" "$TMPDIM" << 'PYEOF'
 import serial, sys
 
 port_path, raw_path, dim_path = sys.argv[1], sys.argv[2], sys.argv[3]

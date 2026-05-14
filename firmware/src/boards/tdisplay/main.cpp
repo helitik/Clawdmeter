@@ -116,7 +116,7 @@ void setup() {
     delay(50);
 
     if (!gfx->begin()) Serial.println("gfx->begin() failed");
-    gfx->fillScreen(BLACK);
+    gfx->fillScreen(0x0000);  // black (Arduino_GFX named constants are RGB565_*)
 
     ledcAttach(LCD_BL, 5000, 8);
     backlight_set(80);
