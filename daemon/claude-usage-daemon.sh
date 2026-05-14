@@ -98,30 +98,47 @@ scan_for_device() {
     return 1
 }
 
-# Connect to the device
+# Connect to the device. Counts consecutive failures across calls; only
+# nukes the bluez bond after several attempts, so a normal device reboot
+# (which typically takes 1–2 connect retries to settle) preserves the
+# pairing and the host doesn't re-prompt to trust the device every time.
+CONNECT_FAIL_COUNT=0
+CONNECT_FAIL_LIMIT=5
+
 connect_device() {
     log "Connecting to $DEVICE_MAC..."
 
-    # Trust first (allows auto-reconnect)
+    # Trust first (allows auto-reconnect without re-pairing prompts)
     bluetoothctl trust "$DEVICE_MAC" &>/dev/null
 
-    # Connect
     bluetoothctl connect "$DEVICE_MAC" &>/dev/null
     sleep 2
 
     if is_connected; then
         log "Connected"
+        CONNECT_FAIL_COUNT=0
         return 0
     fi
-    log "Connection failed"
+
+    CONNECT_FAIL_COUNT=$((CONNECT_FAIL_COUNT + 1))
+    log "Connection failed ($CONNECT_FAIL_COUNT/$CONNECT_FAIL_LIMIT)"
+
+    if [ "$CONNECT_FAIL_COUNT" -lt "$CONNECT_FAIL_LIMIT" ]; then
+        # Likely the device is mid-reboot or transiently unavailable; keep
+        # the cached MAC + bluez bond so the next attempt is a silent
+        # re-connect, not a fresh pairing prompt.
+        return 1
+    fi
+
+    # Persistent failure: probably a hardware swap or a dead device.
+    # Drop the cache so the next scan re-discovers by name.
+    log "Repeated failures, invalidating cache + bluez bond"
     if [ -f "$SAVED_MAC_FILE" ] && [ "$(cat "$SAVED_MAC_FILE")" = "$DEVICE_MAC" ]; then
-        log "Invalidating cached MAC, will rescan by name"
         rm -f "$SAVED_MAC_FILE"
     fi
-    # Remove from bluez so the next scan won't re-pick this dead MAC.
-    # If the device comes back online it'll re-advertise and be re-discovered.
     bluetoothctl remove "$DEVICE_MAC" &>/dev/null
     DEVICE_MAC=""
+    CONNECT_FAIL_COUNT=0
     return 1
 }
 
