@@ -1,9 +1,14 @@
 #include "ui.h"
 #include "splash.h"
+#include "usage_rate.h"
 #include <lvgl.h>
 #include <Arduino.h>
 #include <time.h>
 #include "theme.h"
+
+// How often the clock screen swaps to a new animation within the current
+// rate group, matching the fullscreen splash's auto-rotate cadence.
+#define CLOCK_ANIM_ROTATE_MS 20000
 
 // 170×320 portrait layout (rotation 2, USB connector at top). Uses LVGL's
 // built-in Montserrat fonts and FontAwesome symbol subset — no custom
@@ -57,6 +62,8 @@ static lv_obj_t* lbl_clock_time = NULL;
 static lv_obj_t* lbl_clock_date = NULL;
 static lv_obj_t* lbl_clock_msg = NULL;
 static splash_mini_state_t clock_logo_state;
+static int      clock_last_rate_group = -1;
+static uint32_t clock_anim_rotated_ms = 0;
 
 // Clock-sync state. epoch_at_sync is *already* timezone-shifted to local
 // seconds-since-epoch so gmtime_r() yields local wall-clock values without
@@ -466,9 +473,26 @@ void ui_tick_anim(void) {
 
     // Clock screen tick: re-render time/date once per minute (gated by
     // clock_last_render_min), advance the animated Clawd, refresh the
-    // rotating word beneath the Clawd when it ticks.
+    // rotating word beneath the Clawd when it ticks. Also swap the Clawd
+    // animation to track the current usage rate group (idle/normal/active/
+    // heavy) — same rotation cadence as the fullscreen splash.
     if (current_screen == SCREEN_CLOCK) {
         clock_render(false);
+
+        int rg = usage_rate_group();
+        bool rate_changed = (rg != clock_last_rate_group);
+        bool rotate_due   = (now - clock_anim_rotated_ms) >= CLOCK_ANIM_ROTATE_MS;
+        if ((rate_changed || rotate_due) && clock_logo_canvas) {
+            int idx = splash_pick_index_for_rate();
+            if (idx >= 0) {
+                splash_mini_init_scaled(&clock_logo_state, (uint16_t)idx,
+                                        clock_logo_buf, CLOCK_LOGO_SCALE);
+                lv_obj_invalidate(clock_logo_canvas);
+            }
+            clock_last_rate_group = rg;
+            clock_anim_rotated_ms = now;
+        }
+
         if (clock_logo_canvas &&
             splash_mini_tick_scaled(&clock_logo_state, clock_logo_buf, CLOCK_LOGO_SCALE)) {
             lv_obj_invalidate(clock_logo_canvas);

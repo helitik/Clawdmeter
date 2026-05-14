@@ -203,15 +203,22 @@ void splash_next(void) {
     Serial.printf("splash: -> %s\n", a->name);
 }
 
-void splash_pick_for_current_rate(void) {
-    if (SPLASH_ANIM_COUNT == 0) return;
+// Bumps the current rate-group's rotation counter and returns the next
+// animation index, or -1 if no animations are loaded. Shared by the
+// fullscreen splash and the clock-screen mini canvas so they round-robin
+// through the same group rotation.
+static int8_t pick_next_for_rate(void) {
+    if (SPLASH_ANIM_COUNT == 0) return -1;
     int g = usage_rate_group();
     if (g < 0 || g >= GROUP_COUNT) g = 0;
-    if (group_size[g] == 0) return;
-
+    if (group_size[g] == 0) return -1;
     uint8_t slot = group_rotation[g] % group_size[g];
     group_rotation[g]++;
-    int8_t idx = group_lists[g][slot];
+    return group_lists[g][slot];
+}
+
+void splash_pick_for_current_rate(void) {
+    int8_t idx = pick_next_for_rate();
     if (idx < 0) return;
 
     cur_anim = (uint16_t)idx;
@@ -220,6 +227,11 @@ void splash_pick_for_current_rate(void) {
     last_pick_ms = frame_started_ms;
     const splash_anim_def_t *a = &splash_anims[cur_anim];
     render_frame(a->frames[0], a->palette);
+}
+
+int splash_pick_index_for_rate(void) {
+    int8_t idx = pick_next_for_rate();
+    return (idx < 0) ? -1 : (int)idx;
 }
 
 bool splash_is_active(void) { return active; }
