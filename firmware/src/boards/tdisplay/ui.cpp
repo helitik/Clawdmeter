@@ -39,8 +39,18 @@ static lv_obj_t* lbl_ble_status;
 static lv_obj_t* lbl_ble_device;
 static lv_obj_t* lbl_ble_mac;
 
-// ---- Battery symbol (top-right of usage/ble screens) ----
-static lv_obj_t* battery_lbl;
+// ---- Title-bar Clawd logo (animated 20×20 pixel-art) ----
+// Buffer must outlive the canvas, so it's static. The canvas widget is kept
+// so we can invalidate it whenever splash_mini_tick advances a frame.
+#define LOGO_SIZE 20
+static uint16_t logo_buf[LOGO_SIZE * LOGO_SIZE];
+static lv_obj_t* logo_canvas = NULL;
+static splash_mini_state_t logo_state;
+
+// ---- Battery symbol (top-right) ----
+// Hidden by default on T-Display S3 (no charge-status pin, often USB-powered,
+// reading misleading). Compile with -DSHOW_BATTERY_ICON=1 to opt in.
+static lv_obj_t* battery_lbl = NULL;
 
 static screen_t current_screen = SCREEN_USAGE;
 static screen_t prev_non_splash_screen = SCREEN_USAGE;
@@ -129,11 +139,20 @@ static void init_usage_screen(lv_obj_t* scr) {
     lv_obj_set_style_pad_all(usage_container, 0, 0);
     lv_obj_clear_flag(usage_container, LV_OBJ_FLAG_SCROLLABLE);
 
+    // Animated Clawd pictogram next to the title — reuses splash animation
+    // frame data via splash_mini_*. Animation index 0 is the first entry in
+    // splash_anims[] (typically a calm "idle breathe"), which is what we
+    // want for a title-bar accent.
+    logo_canvas = lv_canvas_create(usage_container);
+    lv_canvas_set_buffer(logo_canvas, logo_buf, LOGO_SIZE, LOGO_SIZE, LV_COLOR_FORMAT_RGB565);
+    splash_mini_init(&logo_state, 0, logo_buf);
+    lv_obj_set_pos(logo_canvas, MARGIN, 1);
+
     lbl_title = lv_label_create(usage_container);
     lv_label_set_text(lbl_title, "Usage");
     lv_obj_set_style_text_font(lbl_title, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(lbl_title, COL_TEXT, 0);
-    lv_obj_set_pos(lbl_title, MARGIN, 4);
+    lv_obj_set_pos(lbl_title, MARGIN + LOGO_SIZE + 6, 4);
 
     // Session @ y=26 (label/pct/bar/reset total height ~50 px)
     make_metric_row(usage_container, 26, "Session",
@@ -198,12 +217,16 @@ void ui_init(void) {
     init_bluetooth_screen(scr);
     splash_init(scr);
 
-    // Battery symbol on top of all containers, upper-right.
+#if SHOW_BATTERY_ICON
+    // Battery symbol on top of all containers, upper-right. Opt-in: no
+    // charge-status pin on T-Display S3 means the reading is often
+    // misleading when the board is USB-powered without a battery attached.
     battery_lbl = lv_label_create(scr);
     lv_label_set_text(battery_lbl, LV_SYMBOL_BATTERY_EMPTY);
     lv_obj_set_style_text_font(battery_lbl, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(battery_lbl, COL_DIM, 0);
     lv_obj_align(battery_lbl, LV_ALIGN_TOP_RIGHT, -MARGIN, 4);
+#endif
 }
 
 void ui_update(const UsageData* data) {
@@ -234,6 +257,9 @@ void ui_tick_anim(void) {
         static char buf[40];
         snprintf(buf, sizeof(buf), "%s ...", anim_messages[anim_msg_idx]);
         lv_label_set_text(lbl_anim, buf);
+    }
+    if (logo_canvas && splash_mini_tick(&logo_state, logo_buf)) {
+        lv_obj_invalidate(logo_canvas);
     }
 }
 
@@ -313,6 +339,7 @@ void ui_update_ble_status(ble_state_t state, const char* name, const char* mac) 
 }
 
 void ui_update_battery(int percent, bool charging) {
+    if (!battery_lbl) return;
     const char* sym;
     if (charging)              sym = LV_SYMBOL_CHARGE;
     else if (percent < 0)      sym = LV_SYMBOL_BATTERY_EMPTY;

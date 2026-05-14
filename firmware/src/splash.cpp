@@ -207,3 +207,48 @@ void splash_hide(void) {
 lv_obj_t* splash_get_root(void) {
     return splash_container;
 }
+
+static void render_frame_into(const splash_anim_def_t *a, uint16_t frame, uint16_t *out) {
+    const uint8_t *cells = a->frames[frame];
+    for (int i = 0; i < GRID * GRID; i++) {
+        uint8_t code = cells[i];
+        out[i] = (code < SPLASH_PALETTE_SIZE) ? a->palette[code] : COL_EMPTY;
+    }
+}
+
+bool splash_render_static(uint16_t idx, uint16_t *out) {
+    if (SPLASH_ANIM_COUNT == 0) return false;
+    if (idx >= SPLASH_ANIM_COUNT) idx = 0;
+    const splash_anim_def_t *a = &splash_anims[idx];
+    if (a->frame_count == 0 || a->palette == NULL) return false;
+    render_frame_into(a, 0, out);
+    return true;
+}
+
+void splash_mini_init(splash_mini_state_t *s, uint16_t anim_idx, uint16_t *out_buf) {
+    if (SPLASH_ANIM_COUNT == 0) {
+        s->anim_idx = 0;
+        s->cur_frame = 0;
+        s->frame_started_ms = 0;
+        return;
+    }
+    if (anim_idx >= SPLASH_ANIM_COUNT) anim_idx = 0;
+    s->anim_idx = anim_idx;
+    s->cur_frame = 0;
+    s->frame_started_ms = millis();
+    splash_render_static(anim_idx, out_buf);
+}
+
+bool splash_mini_tick(splash_mini_state_t *s, uint16_t *out_buf) {
+    if (SPLASH_ANIM_COUNT == 0) return false;
+    const splash_anim_def_t *a = &splash_anims[s->anim_idx];
+    if (a->frame_count == 0 || a->palette == NULL) return false;
+
+    uint16_t hold = a->holds[s->cur_frame];
+    if (millis() - s->frame_started_ms < hold) return false;
+
+    s->cur_frame = (s->cur_frame + 1) % a->frame_count;
+    s->frame_started_ms = millis();
+    render_frame_into(a, s->cur_frame, out_buf);
+    return true;
+}
