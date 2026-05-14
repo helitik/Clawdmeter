@@ -65,6 +65,7 @@ static void on_ble_data(const char* json) {
     if (event && *event) {
         Serial.printf("event: %s\n", event);
         if (strcmp(event, "done") == 0) {
+            ui_note_activity();   // Stop hook fired → user is actively coding
             ui_celebrate();
         }
         ble_send_ack();
@@ -79,12 +80,22 @@ static void on_ble_data(const char* json) {
     usage.ok = doc["ok"] | false;
     usage.valid = true;
 
+    // Clock sync: optional "t" (epoch seconds) + "tz" (offset minutes east
+    // of UTC). The clock screen needs this to display wall-clock time
+    // without pulling NTP onto the firmware.
+    uint32_t t  = doc["t"]  | (uint32_t)0;
+    int      tz = doc["tz"] | 0;
+    if (t > 0) ui_set_clock_time(t, tz);
+
     int g_before = usage_rate_group();
     usage_rate_sample(usage.session_pct);
     int g_after = usage_rate_group();
     if (g_after != g_before && splash_is_active()) {
         splash_pick_for_current_rate();
     }
+    // Active rate group (anything above idle) also counts as user activity
+    // for the idle-switch timer, in case the Stop hook isn't configured.
+    if (g_after >= 1) ui_note_activity();
     Serial.printf("usage: s=%.1f%%, w=%.1f%%\n", usage.session_pct, usage.weekly_pct);
     ui_update(&usage);
     ble_send_ack();
@@ -125,6 +136,7 @@ static void check_serial_cmd() {
         if (c == '\n' || c == '\r') {
             cmd_buf[cmd_pos] = '\0';
             if (strcmp(cmd_buf, "screenshot") == 0) send_screenshot();
+            else if (strcmp(cmd_buf, "cycle") == 0) ui_cycle_screen();
             cmd_pos = 0;
         } else if (cmd_pos < CMD_BUF_SIZE - 1) {
             cmd_buf[cmd_pos++] = c;

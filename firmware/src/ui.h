@@ -5,6 +5,7 @@
 enum screen_t {
     SCREEN_SPLASH,
     SCREEN_USAGE,
+    SCREEN_CLOCK,
     SCREEN_BLUETOOTH,
     SCREEN_COUNT,
 };
@@ -23,3 +24,12 @@ void ui_update_battery(int percent, bool charging);
 // celebration pool) then return to whichever screen was visible before.
 // Re-triggering while a celebration is already on screen extends the timer.
 void ui_celebrate(void);
+
+// Sync the clock display from a daemon-supplied epoch + timezone offset.
+// `tz_offset_min` is local minutes ahead of UTC (e.g. 60 for CEST, -300
+// for EST). Calling this resets the internal millis() drift correction.
+void ui_set_clock_time(uint32_t epoch_seconds, int tz_offset_min);
+
+// Mark that the user is actively coding so the idle-switch timer resets.
+// Called on Stop hook events and when rate-group climbs above idle.
+void ui_note_activity(void);

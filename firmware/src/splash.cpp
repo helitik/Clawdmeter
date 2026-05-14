@@ -303,3 +303,52 @@ bool splash_mini_tick(splash_mini_state_t *s, uint16_t *out_buf) {
     render_frame_into(a, s->cur_frame, out_buf);
     return true;
 }
+
+static void render_frame_scaled(const splash_anim_def_t *a, uint16_t frame,
+                                uint16_t *out, uint8_t scale);
+
+void splash_mini_init_scaled(splash_mini_state_t *s, uint16_t anim_idx,
+                             uint16_t *out_buf, uint8_t scale) {
+    if (SPLASH_ANIM_COUNT == 0 || scale == 0) {
+        s->anim_idx = 0; s->cur_frame = 0; s->frame_started_ms = 0;
+        return;
+    }
+    if (anim_idx >= SPLASH_ANIM_COUNT) anim_idx = 0;
+    s->anim_idx = anim_idx;
+    s->cur_frame = 0;
+    s->frame_started_ms = millis();
+    const splash_anim_def_t *a = &splash_anims[anim_idx];
+    if (a->frame_count == 0 || a->palette == NULL) return;
+    render_frame_scaled(a, 0, out_buf, scale);
+}
+
+static void render_frame_scaled(const splash_anim_def_t *a, uint16_t frame,
+                                uint16_t *out, uint8_t scale) {
+    const uint8_t *cells = a->frames[frame];
+    int W = GRID * scale;
+    for (int gy = 0; gy < GRID; gy++) {
+        for (int gx = 0; gx < GRID; gx++) {
+            uint8_t code = cells[gy * GRID + gx];
+            uint16_t color = (code < SPLASH_PALETTE_SIZE) ? a->palette[code] : COL_EMPTY;
+            // Write the scale×scale block for this source pixel.
+            for (int dy = 0; dy < scale; dy++) {
+                uint16_t *row = &out[(gy * scale + dy) * W + gx * scale];
+                for (int dx = 0; dx < scale; dx++) row[dx] = color;
+            }
+        }
+    }
+}
+
+bool splash_mini_tick_scaled(splash_mini_state_t *s, uint16_t *out_buf, uint8_t scale) {
+    if (SPLASH_ANIM_COUNT == 0 || scale == 0) return false;
+    const splash_anim_def_t *a = &splash_anims[s->anim_idx];
+    if (a->frame_count == 0 || a->palette == NULL) return false;
+
+    uint16_t hold = a->holds[s->cur_frame];
+    if (millis() - s->frame_started_ms < hold) return false;
+
+    s->cur_frame = (s->cur_frame + 1) % a->frame_count;
+    s->frame_started_ms = millis();
+    render_frame_scaled(a, s->cur_frame, out_buf, scale);
+    return true;
+}

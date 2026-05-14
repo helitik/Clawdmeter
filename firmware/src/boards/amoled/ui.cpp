@@ -569,3 +569,15 @@ void ui_celebrate(void) {
     // _celebration_screen state machine — kept out of scope for the
     // initial feature shipment.
 }
+
+void ui_set_clock_time(uint32_t epoch_seconds, int tz_offset_min) {
+    // No-op on AMOLED — the dedicated Clock screen lives only on the
+    // T-Display S3 build for now. Keeping the function defined so the
+    // shared firmware/src/boards/tdisplay/main.cpp dispatch can be reused
+    // here without ifdef pollution.
+    (void)epoch_seconds; (void)tz_offset_min;
+}
+
+void ui_note_activity(void) {
+    // No-op on AMOLED — no idle auto-switch to a Clock screen here.
+}

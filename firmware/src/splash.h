@@ -52,7 +52,18 @@ typedef struct {
 // render that frame into out_buf.
 void splash_mini_init(splash_mini_state_t *s, uint16_t anim_idx, uint16_t *out_buf);
 
+// Like splash_mini_init but renders frame 0 at an N× upscale into a
+// (20·scale)² buffer. Pair with splash_mini_tick_scaled() at the same
+// scale on subsequent frames.
+void splash_mini_init_scaled(splash_mini_state_t *s, uint16_t anim_idx,
+                             uint16_t *out_buf, uint8_t scale);
+
 // Advance to the next frame if the current frame's hold time has elapsed,
 // re-rendering into out_buf. Returns true when a new frame was drawn — the
 // caller should invalidate the canvas backed by out_buf in that case.
 bool splash_mini_tick(splash_mini_state_t *s, uint16_t *out_buf);
+
+// Same as splash_mini_tick but renders at an N× pixel upscale into a
+// (20·scale) × (20·scale) RGB565 buffer. Used for larger logo placements
+// like the clock screen's prominently-displayed Clawd next to the time.
+bool splash_mini_tick_scaled(splash_mini_state_t *s, uint16_t *out_buf, uint8_t scale);

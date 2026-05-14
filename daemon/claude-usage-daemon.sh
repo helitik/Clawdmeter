@@ -65,21 +65,29 @@ save_mac() {
     echo "$DEVICE_MAC" > "$SAVED_MAC_FILE"
 }
 
-# Scan for Claude Controller
+# Scan for Claude Controller. Fast-path first: bluez often remembers the
+# device across daemon restarts, so we check the known-devices list before
+# committing to an 8 s discovery scan. Stale entries are removed on connect
+# failure (see connect_device), so a few retry cycles will converge on the
+# live device.
 scan_for_device() {
+    local found
+    # Fast path: maybe bluez already remembers it.
+    found=$(bluetoothctl devices 2>/dev/null | grep "$DEVICE_NAME" | head -1 | awk '{print $2}')
+    if [ -n "$found" ]; then
+        DEVICE_MAC="$found"
+        save_mac
+        log "Found (cached): $DEVICE_MAC"
+        return 0
+    fi
+
     log "Scanning for '$DEVICE_NAME'..."
-    # Start LE scan
     bluetoothctl scan le &>/dev/null &
     local scan_pid=$!
     sleep 8
     kill "$scan_pid" 2>/dev/null
     wait "$scan_pid" 2>/dev/null
 
-    # Pick the first matching device. Multiple matches happen when bluez
-    # remembers old hardware (e.g. after swapping ESP boards). Stale entries
-    # are removed on connect failure (see connect_device), so a few retry
-    # cycles will converge on the live device.
-    local found
     found=$(bluetoothctl devices 2>/dev/null | grep "$DEVICE_NAME" | head -1 | awk '{print $2}')
     if [ -n "$found" ]; then
         DEVICE_MAC="$found"
@@ -226,14 +234,24 @@ poll() {
     s7d_reset=${s7d_reset:-0}
     status=${status:-unknown}
 
+    # Compute local timezone offset in minutes east of UTC so the device's
+    # clock screen can show wall-clock time without doing NTP itself.
+    local tz_offset tz_sign tz_hh tz_mm tz_min
+    tz_offset=$(date +%z)               # e.g. "+0200" or "-0500"
+    tz_sign="${tz_offset:0:1}"
+    tz_hh="${tz_offset:1:2}"
+    tz_mm="${tz_offset:3:2}"
+    tz_min=$((10#$tz_hh * 60 + 10#$tz_mm))
+    [ "$tz_sign" = "-" ] && tz_min=$((-tz_min))
+
     local payload
-    payload=$(awk -v u5="$s5h_util" -v r5="$s5h_reset" -v u7="$s7d_util" -v r7="$s7d_reset" -v st="$status" -v now="$now" \
+    payload=$(awk -v u5="$s5h_util" -v r5="$s5h_reset" -v u7="$s7d_util" -v r7="$s7d_reset" -v st="$status" -v now="$now" -v tz="$tz_min" \
         'BEGIN {
             sp = sprintf("%.0f", u5 * 100);
             sr = (r5 - now) / 60; sr = sr > 0 ? sprintf("%.0f", sr) : 0;
             wp = sprintf("%.0f", u7 * 100);
             wr = (r7 - now) / 60; wr = wr > 0 ? sprintf("%.0f", wr) : 0;
-            printf "{\"s\":%s,\"sr\":%s,\"w\":%s,\"wr\":%s,\"st\":\"%s\",\"ok\":true}", sp, sr, wp, wr, st;
+            printf "{\"s\":%s,\"sr\":%s,\"w\":%s,\"wr\":%s,\"st\":\"%s\",\"ok\":true,\"t\":%s,\"tz\":%s}", sp, sr, wp, wr, st, now, tz;
         }')
 
     log "Sending: $payload"
@@ -272,7 +290,7 @@ while true; do
         scan_for_device || {
             log "Device not found, retrying in ${BACKOFF}s..."
             sleep "$BACKOFF"
-            BACKOFF=$((BACKOFF < 60 ? BACKOFF * 2 : 60))
+            BACKOFF=$((BACKOFF < 8 ? BACKOFF * 2 : 8))
             continue
         }
     fi
@@ -282,7 +300,7 @@ while true; do
         connect_device || {
             log "Retrying in ${BACKOFF}s..."
             sleep "$BACKOFF"
-            BACKOFF=$((BACKOFF < 60 ? BACKOFF * 2 : 60))
+            BACKOFF=$((BACKOFF < 8 ? BACKOFF * 2 : 8))
             continue
         }
     fi
