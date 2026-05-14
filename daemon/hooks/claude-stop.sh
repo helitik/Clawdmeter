@@ -36,6 +36,8 @@ PID_FILE="$HOME/.config/claude-usage-monitor/daemon.pid"
 # points to a JSONL file where every assistant turn has a `.message.usage`
 # block. Sum the three input-side counters of the LAST assistant turn to
 # get the context size the model saw at that point.
+DEBUG_LOG="/tmp/clawdmeter-hook.log"
+
 INPUT=$(cat 2>/dev/null)
 if [ -n "$INPUT" ] && command -v jq >/dev/null 2>&1; then
     # Skip sub-agent stops — their transcript holds only the sub-agent's
@@ -44,7 +46,10 @@ if [ -n "$INPUT" ] && command -v jq >/dev/null 2>&1; then
     # Task spawn). hook_event_name is "Stop" for the main agent and
     # "SubagentStop" for Task children.
     EVENT=$(echo "$INPUT" | jq -r '.hook_event_name // empty' 2>/dev/null)
+    SESSION=$(echo "$INPUT" | jq -r '.session_id // empty' 2>/dev/null)
     if [ "$EVENT" = "SubagentStop" ]; then
+        printf '[%s] SKIP event=%s session=%s\n' \
+            "$(date '+%H:%M:%S')" "$EVENT" "$SESSION" >> "$DEBUG_LOG"
         exit 0
     fi
     TRANSCRIPT=$(echo "$INPUT" | jq -r '.transcript_path // empty' 2>/dev/null)
@@ -60,6 +65,12 @@ if [ -n "$INPUT" ] && command -v jq >/dev/null 2>&1; then
         if [ -n "$TOKENS" ] && [ "$TOKENS" != "null" ] && [ "$TOKENS" -gt 0 ] 2>/dev/null; then
             echo "$TOKENS" > "$CONTEXT_FILE"
         fi
+        # One-line diagnostic per fire: event type, session_id prefix,
+        # tokens, basename of transcript. Lets us correlate any "context
+        # bar dropped" complaint with what the hook actually saw.
+        printf '[%s] event=%s session=%.8s tokens=%s transcript=%s\n' \
+            "$(date '+%H:%M:%S')" "$EVENT" "$SESSION" "$TOKENS" \
+            "$(basename "$TRANSCRIPT" 2>/dev/null)" >> "$DEBUG_LOG"
     fi
 
     # --- Project + branch label for the Usage screen ------------------------
