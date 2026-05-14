@@ -524,9 +524,11 @@ void ui_celebrate(void) {
     // If a celebration is already on screen, extend its lifetime. Otherwise
     // capture the screen we'll restore to when the timer fires.
     if (celebration_end_ms == 0) {
-        pre_celebration_screen = (current_screen == SCREEN_SPLASH)
-                                     ? prev_non_splash_screen
-                                     : current_screen;
+        // Capture wherever the user actually is. The re-trigger case (a
+        // celebration firing while another is on screen) is already filtered
+        // by the celebration_end_ms == 0 guard above, so we never overwrite
+        // the saved screen with SCREEN_SPLASH mid-celebration.
+        pre_celebration_screen = current_screen;
         lv_obj_add_flag(usage_container, LV_OBJ_FLAG_HIDDEN);
         lv_obj_add_flag(ble_container, LV_OBJ_FLAG_HIDDEN);
         if (clock_container) lv_obj_add_flag(clock_container, LV_OBJ_FLAG_HIDDEN);
