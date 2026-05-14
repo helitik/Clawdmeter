@@ -68,6 +68,10 @@ static void on_ble_data(const char* json) {
     uint32_t ctx_max    = doc["cm"] | (uint32_t)0;
     if (ctx_tokens > 0) ui_set_context_tokens(ctx_tokens, ctx_max);
 
+    // Optional project + branch label ("Clawdmeter / tdisplay-portrait").
+    const char* prj = doc["p"] | (const char*)nullptr;
+    if (prj && *prj) ui_set_project_info(prj);
+
     const char* event = doc["e"] | (const char*)nullptr;
     if (event && *event) {
         Serial.printf("event: %s c=%lu\n", event, (unsigned long)ctx_tokens);

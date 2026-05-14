@@ -41,3 +41,8 @@ void ui_note_activity(void);
 // (typically 200 000) — used to render a usage bar alongside the figure.
 // Pass `max_tokens == 0` to leave the previous max in place.
 void ui_set_context_tokens(uint32_t tokens, uint32_t max_tokens);
+
+// Set the project / branch label shown under the Context bar. Typically
+// "Clawdmeter / tdisplay-portrait" — basename of cwd + git branch from the
+// Stop hook. Empty / NULL clears the label.
+void ui_set_project_info(const char* text);

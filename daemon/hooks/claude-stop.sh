@@ -28,6 +28,7 @@
 #     running or stdin doesn't contain a transcript path.
 
 CONTEXT_FILE="/tmp/clawdmeter-context.txt"
+PROJECT_FILE="/tmp/clawdmeter-project.txt"
 PID_FILE="$HOME/.config/claude-usage-monitor/daemon.pid"
 
 # --- 1. Compute context tokens from the session transcript -----------------
@@ -58,6 +59,21 @@ if [ -n "$INPUT" ] && command -v jq >/dev/null 2>&1; then
         ' "$TRANSCRIPT" 2>/dev/null)
         if [ -n "$TOKENS" ] && [ "$TOKENS" != "null" ] && [ "$TOKENS" -gt 0 ] 2>/dev/null; then
             echo "$TOKENS" > "$CONTEXT_FILE"
+        fi
+    fi
+
+    # --- Project + branch label for the Usage screen ------------------------
+    # cwd is provided directly in the hook input; git branch comes from a
+    # cheap `git rev-parse` against that directory. Falls back to project
+    # name only when the cwd isn't a git repo (or we're in a detached HEAD).
+    CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
+    if [ -n "$CWD" ] && [ -d "$CWD" ]; then
+        PROJECT=$(basename "$CWD")
+        BRANCH=$(git -C "$CWD" rev-parse --abbrev-ref HEAD 2>/dev/null)
+        if [ -n "$BRANCH" ] && [ "$BRANCH" != "HEAD" ]; then
+            echo "${PROJECT} / ${BRANCH}" > "$PROJECT_FILE"
+        else
+            echo "${PROJECT}" > "$PROJECT_FILE"
         fi
     fi
 fi

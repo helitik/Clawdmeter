@@ -48,6 +48,9 @@ static lv_obj_t* lbl_ctx_pct   = NULL;
 static lv_obj_t* bar_ctx       = NULL;
 static lv_obj_t* lbl_ctx_abs   = NULL;
 static uint32_t  last_ctx_max  = 200000;  // sane default until the daemon supplies one
+// Project + branch label shown below the Context bar (e.g. "Clawdmeter /
+// tdisplay-portrait"). Wraps to two lines on narrow screens.
+static lv_obj_t* lbl_project   = NULL;
 
 // ---- Bluetooth screen widgets ----
 static lv_obj_t* ble_container;
@@ -222,6 +225,18 @@ static void init_usage_screen(lv_obj_t* scr) {
                     &lbl_ctx_label, &lbl_ctx_pct,
                     &bar_ctx, &lbl_ctx_abs);
 
+    // Project + branch label, ~24 px under the Context footer. Wraps to a
+    // second line when the project name + branch don't fit on one row at
+    // 170 px wide. Centered, dim accent so it doesn't fight the bars above.
+    lbl_project = lv_label_create(usage_container);
+    lv_label_set_text(lbl_project, "");
+    lv_obj_set_style_text_font(lbl_project, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_color(lbl_project, COL_DIM, 0);
+    lv_obj_set_style_text_align(lbl_project, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(lbl_project, SCR_W - 2 * MARGIN);
+    lv_label_set_long_mode(lbl_project, LV_LABEL_LONG_WRAP);
+    lv_obj_set_pos(lbl_project, MARGIN, 232);
+
     // Animated word ribbon at the bottom of the screen.
     lbl_anim = lv_label_create(usage_container);
     lv_label_set_text(lbl_anim, "");
@@ -370,6 +385,31 @@ void ui_set_clock_time(uint32_t epoch_seconds, int tz_offset_min) {
 
 void ui_note_activity(void) {
     last_activity_ms = millis();
+}
+
+void ui_set_project_info(const char* text) {
+    if (!lbl_project) return;
+    if (!text || !*text) {
+        lv_label_set_text(lbl_project, "");
+        return;
+    }
+
+    // Swap the " / " separator (used by the hook for readability in JSON
+    // and logs) for a hard newline so the project name and branch land on
+    // separate lines — LV_LABEL_LONG_WRAP otherwise breaks mid-word on
+    // "tdisplay-portrait" which looks bad. Buffer is sized for typical
+    // project+branch combinations; longer strings just keep the " / ".
+    char buf[80];
+    const char* sep = strstr(text, " / ");
+    if (sep && (size_t)(sep - text) < sizeof(buf) - 2) {
+        size_t lead = (size_t)(sep - text);
+        memcpy(buf, text, lead);
+        buf[lead] = '\n';
+        strlcpy(buf + lead + 1, sep + 3, sizeof(buf) - lead - 1);
+        lv_label_set_text(lbl_project, buf);
+    } else {
+        lv_label_set_text(lbl_project, text);
+    }
 }
 
 void ui_set_context_tokens(uint32_t tokens, uint32_t max_tokens) {

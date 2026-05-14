@@ -589,3 +589,8 @@ void ui_set_context_tokens(uint32_t tokens, uint32_t max_tokens) {
     (void)tokens;
     (void)max_tokens;
 }
+
+void ui_set_project_info(const char* text) {
+    // No-op on AMOLED — same rationale as ui_set_context_tokens.
+    (void)text;
+}
