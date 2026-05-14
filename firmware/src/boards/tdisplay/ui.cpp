@@ -35,7 +35,14 @@ static lv_obj_t* lbl_weekly_pct;
 static lv_obj_t* bar_weekly;
 static lv_obj_t* lbl_weekly_reset;
 static lv_obj_t* lbl_anim;
-static lv_obj_t* lbl_context = NULL;
+// Context-window metric row (third bar under Session/Weekly). Populated by
+// the Stop hook → daemon → BLE pipeline; widgets stay at "--%" / blank until
+// the first event arrives.
+static lv_obj_t* lbl_ctx_label = NULL;
+static lv_obj_t* lbl_ctx_pct   = NULL;
+static lv_obj_t* bar_ctx       = NULL;
+static lv_obj_t* lbl_ctx_abs   = NULL;
+static uint32_t  last_ctx_max  = 200000;  // sane default until the daemon supplies one
 
 // ---- Bluetooth screen widgets ----
 static lv_obj_t* ble_container;
@@ -191,33 +198,30 @@ static void init_usage_screen(lv_obj_t* scr) {
     lv_obj_set_style_text_color(lbl_title, COL_TEXT, 0);
     lv_obj_set_pos(lbl_title, MARGIN + LOGO_SIZE + 6, 4);
 
-    // Session @ y=44 — gives the title row + logo a bit of breathing space.
-    // Each metric block needs ~46 px (label + pct row, bar at +22, reset at +34).
+    // Three stacked metric rows. Each row is ~46 px tall (label/pct top,
+    // bar at +22, footer text at +34). Rows are spaced 64 px apart to give
+    // each block its own visual band on the 320-tall portrait screen.
     make_metric_row(usage_container, 44, "Session",
                     &lbl_session_label, &lbl_session_pct,
                     &bar_session, &lbl_session_reset);
 
-    // Weekly @ y=120 — leaves the lower third of the screen for the bottom
-    // message ribbon (context tokens + animated word).
-    make_metric_row(usage_container, 120, "Weekly",
+    make_metric_row(usage_container, 108, "Weekly",
                     &lbl_weekly_label, &lbl_weekly_pct,
                     &bar_weekly, &lbl_weekly_reset);
 
-    // Bottom message ribbon — centered stack in portrait. Animated word
-    // above, context-token figure below as the main metric (bigger font).
+    // Context row: same layout as Session/Weekly but the footer slot shows
+    // "150k / 200k" instead of a reset countdown. Initial bar is grey.
+    make_metric_row(usage_container, 172, "Context",
+                    &lbl_ctx_label, &lbl_ctx_pct,
+                    &bar_ctx, &lbl_ctx_abs);
+
+    // Animated word ribbon at the bottom of the screen.
     lbl_anim = lv_label_create(usage_container);
     lv_label_set_text(lbl_anim, "");
     lv_obj_set_style_text_font(lbl_anim, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(lbl_anim, COL_ACCENT, 0);
     lv_obj_set_style_text_align(lbl_anim, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(lbl_anim, LV_ALIGN_BOTTOM_MID, 0, -34);
-
-    lbl_context = lv_label_create(usage_container);
-    lv_label_set_text(lbl_context, "");
-    lv_obj_set_style_text_font(lbl_context, &lv_font_montserrat_18, 0);
-    lv_obj_set_style_text_color(lbl_context, COL_DIM, 0);
-    lv_obj_set_style_text_align(lbl_context, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(lbl_context, LV_ALIGN_BOTTOM_MID, 0, -8);
+    lv_obj_align(lbl_anim, LV_ALIGN_BOTTOM_MID, 0, -12);
 }
 
 static void init_bluetooth_screen(lv_obj_t* scr) {
@@ -361,16 +365,28 @@ void ui_note_activity(void) {
     last_activity_ms = millis();
 }
 
-void ui_set_context_tokens(uint32_t tokens) {
-    if (!lbl_context) return;
-    char buf[16];
-    if (tokens >= 1000) {
-        // "84k", "551k" — readable at a glance, model-agnostic.
-        snprintf(buf, sizeof(buf), "%luk", (unsigned long)(tokens / 1000));
-    } else {
-        snprintf(buf, sizeof(buf), "%lu", (unsigned long)tokens);
-    }
-    lv_label_set_text(lbl_context, buf);
+void ui_set_context_tokens(uint32_t tokens, uint32_t max_tokens) {
+    if (!bar_ctx) return;
+    if (max_tokens > 0) last_ctx_max = max_tokens;
+
+    // Compute % of context used. Clamp to [0..100] so the bar never
+    // overflows even if a future model reports more than the cached max.
+    uint32_t pct_u = (last_ctx_max > 0)
+        ? (uint32_t)((uint64_t)tokens * 100 / last_ctx_max) : 0;
+    if (pct_u > 100) pct_u = 100;
+    int pct = (int)pct_u;
+
+    lv_label_set_text_fmt(lbl_ctx_pct, "%d%%", pct);
+    lv_bar_set_value(bar_ctx, pct, LV_ANIM_ON);
+    lv_obj_set_style_bg_color(bar_ctx, pct_color((float)pct), LV_PART_INDICATOR);
+
+    // Footer: "150k / 200k" — readable at a glance, model-agnostic. Round
+    // to the nearest thousand so the figure stays compact in the 150-px row.
+    char buf[24];
+    unsigned long cur_k = ((unsigned long)tokens + 500) / 1000;
+    unsigned long max_k = ((unsigned long)last_ctx_max + 500) / 1000;
+    snprintf(buf, sizeof(buf), "%luk / %luk", cur_k, max_k);
+    lv_label_set_text(lbl_ctx_abs, buf);
 }
 
 void ui_init(void) {

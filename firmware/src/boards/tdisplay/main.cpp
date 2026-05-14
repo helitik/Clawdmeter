@@ -61,9 +61,12 @@ static void on_ble_data(const char* json) {
         return;
     }
 
-    // Optional context-token count piggy-backed on any payload.
-    uint32_t ctx_tokens = doc["c"] | (uint32_t)0;
-    if (ctx_tokens > 0) ui_set_context_tokens(ctx_tokens);
+    // Optional context-token count piggy-backed on any payload. `cm` is the
+    // model's context-window max (e.g. 200000) — passed alongside `c` so the
+    // firmware can render the bar without baking the limit into the build.
+    uint32_t ctx_tokens = doc["c"]  | (uint32_t)0;
+    uint32_t ctx_max    = doc["cm"] | (uint32_t)0;
+    if (ctx_tokens > 0) ui_set_context_tokens(ctx_tokens, ctx_max);
 
     const char* event = doc["e"] | (const char*)nullptr;
     if (event && *event) {
