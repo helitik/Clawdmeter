@@ -141,7 +141,12 @@ void splash_init(lv_obj_t *parent) {
 
     canvas = lv_canvas_create(splash_container);
     lv_canvas_set_buffer(canvas, canvas_buf, CANVAS_W, CANVAS_H, LV_COLOR_FORMAT_RGB565);
-    lv_obj_center(canvas);
+    // Bottom-align (vs. centered) gives more breathing room above the character.
+    // Some animations (e.g. the "dj" variants with overhead headphones) draw
+    // into row 0 of the 20×20 grid; centered placement made them sit flush
+    // against the top edge. Idle anims have an empty row 19, so anchoring the
+    // canvas to the screen bottom doesn't crowd the legs.
+    lv_obj_align(canvas, LV_ALIGN_BOTTOM_MID, 0, 0);
 
     // Placeholder label (visible only when no animations are loaded)
     label_status = lv_label_create(splash_container);
