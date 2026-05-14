@@ -6,14 +6,15 @@ OUTPUT="${1:-screenshot.png}"
 PORT="${2:-/dev/ttyACM0}"
 
 TMPRAW=$(mktemp /tmp/screenshot_XXXXXX.raw)
-trap "rm -f '$TMPRAW'" EXIT
+TMPDIM=$(mktemp /tmp/screenshot_XXXXXX.dim)
+trap "rm -f '$TMPRAW' '$TMPDIM'" EXIT
 
 echo "Taking screenshot from $PORT..."
 
-python3 - "$PORT" "$TMPRAW" << 'PYEOF'
+python3 - "$PORT" "$TMPRAW" "$TMPDIM" << 'PYEOF'
 import serial, sys
 
-port_path, raw_path = sys.argv[1], sys.argv[2]
+port_path, raw_path, dim_path = sys.argv[1], sys.argv[2], sys.argv[3]
 
 port = serial.Serial(port_path, 115200, timeout=10)
 port.reset_input_buffer()
@@ -41,6 +42,12 @@ while len(data) < raw_size:
 with open(raw_path, "wb") as f:
     f.write(data)
 
+# Hand the captured w/h back to the shell so ffmpeg can target the right
+# panel size (480×480 AMOLED vs 320×170 T-Display S3, etc.) without us
+# having to maintain a per-board mapping here.
+with open(dim_path, "w") as f:
+    f.write(f"{w}x{h}\n")
+
 for _ in range(10):
     line = port.readline().decode("utf-8", errors="replace").strip()
     if line == "SCREENSHOT_END":
@@ -55,7 +62,8 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
-ffmpeg -y -f rawvideo -pixel_format rgb565le -video_size 480x480 \
+DIM=$(cat "$TMPDIM" | tr -d '\r\n ')
+ffmpeg -y -f rawvideo -pixel_format rgb565le -video_size "$DIM" \
     -i "$TMPRAW" -update 1 -frames:v 1 "$OUTPUT" 2>/dev/null || true
 
 

@@ -1,10 +1,41 @@
 # Project context
 
-ESP32-S3 firmware for a desk-side Claude Code usage monitor on a **Waveshare ESP32-S3-Touch-AMOLED-2.16** board (480×480 square AMOLED). Connects to a host daemon over BLE; daemon polls Anthropic API for usage data.
+ESP32-S3 firmware for a desk-side Claude Code usage monitor. Two boards are supported, each as its own PlatformIO env:
+
+- **`waveshare_amoled_216`** — Waveshare ESP32-S3-Touch-AMOLED-2.16 (480×480 square AMOLED, touch, IMU, AXP2101 PMU). Original target.
+- **`tdisplay_s3`** — LilyGO T-Display S3 (170×320 ST7789 i80, 2 buttons, ADC battery, no touch, no IMU, no PMU). Added on branch `tdisplay-s3`.
+
+Both connect to the same host daemon over BLE; daemon polls Anthropic API for usage data.
 
 This file is for future Claude Code sessions to bootstrap quickly. Read this first.
 
-## Hardware (critical pins)
+## Repo layout
+
+```
+firmware/src/
+├── ble.{h,cpp}                    SHARED — NimBLE peripheral + HID keyboard
+├── data.h                         SHARED — UsageData struct
+├── ui.h                           SHARED — UI interface (each board implements)
+├── theme.h                        SHARED — design tokens (colors)
+├── usage_rate.{h,cpp}             SHARED — ring buffer + rate-group classifier
+├── splash.{h,cpp}                 SHARED — 20×20 pixel-art animation engine,
+│                                  CELL upscale factor overridable via -DSPLASH_CELL
+├── splash_animations.h            SHARED — generated, do not hand-edit
+├── power.h                        SHARED — interface (battery %, charging, pwr button)
+├── boards/amoled/                 Waveshare-specific implementations + assets
+│   ├── main.cpp, display_cfg.h, ui.cpp, power.cpp, imu.{h,cpp}
+│   ├── icons.h (48×48), logo.h (80×80)
+│   └── font_*.c (Tiempos 56, Styrene 48/28/24/20, Mono 32, …)
+└── boards/tdisplay/               T-Display S3-specific implementations
+    ├── main.cpp, display_cfg.h, ui.cpp, power.cpp
+    └── (uses LVGL built-in Montserrat 12/14/20 + FontAwesome symbols, no custom fonts)
+```
+
+PlatformIO `build_src_filter` excludes the other board's dir per env. The shared `power.h` interface keeps `power.cpp` board-specific but its API stable.
+
+## Hardware
+
+### Waveshare AMOLED 2.16" (env `waveshare_amoled_216`)
 
 - Display: **CO5300** AMOLED via QSPI (CS=12, SCLK=38, SDIO0..3=4..7, RST=2)
 - Touch: **CST9220** via I2C (SDA=15, SCL=14, INT=11, addr=0x5A)
@@ -12,29 +43,33 @@ This file is for future Claude Code sessions to bootstrap quickly. Read this fir
 - IMU: **QMI8658** on same I2C bus (addr=0x6B) — accelerometer for auto-rotation
 - Buttons: GPIO 0 (left → Space/voice-mode), GPIO 18 (right → Shift+Tab/mode-toggle), AXP PKEY (middle → cycle screens; on splash → cycle animations)
 
-## Architecture
+### LilyGO T-Display S3 standard (env `tdisplay_s3`)
 
-```text
-main.cpp        — setup(), loop(), button polling (left→Space, right→Shift+Tab, mid→cycle), rotation flash
-display_cfg.h   — pin defines, extern object decls
-ui.{h,cpp}      — 3-screen UI (splash, usage, bluetooth); splash is touch-toggled, usage↔bluetooth via mid button
-splash.{h,cpp}  — 20×20 pixel-art animation engine, 24× upscale to 480×480
-imu.{h,cpp}     — accelerometer-driven rotation tracker (returns 0..3)
-power.{h,cpp}   — AXP2101 wrapper (battery %, charging, VBUS, PWR button)
-touch.{h,cpp}   — minimal tap detector → ui_toggle_splash() (Usage/Splash) or ble_clear_bonds() (BT reset zone)
-ble.{h,cpp}     — NimBLE peripheral: custom data service + HID keyboard
-data.h          — UsageData struct
-icons.h         — icon arrays. Battery (5×) are RGB565A8 with alpha; rest are raw RGB565.
-logo.h          — 80×80 RGB565 logo
-font_*.c        — pre-compiled LVGL 9 bitmap fonts (Tiempos 56, Styrene 48/28/24/20, Mono 32)
-splash_animations.h — generated, do not hand-edit
-```
+- Display: **ST7789** 170×320 IPS via 8-bit i80 parallel
+  - CS=6, DC=7, WR=8, RD=9, RST=5, D0..D7 = 39,40,41,42,45,46,47,48
+  - Backlight PWM on GPIO 38, LCD power enable on GPIO 15 (drive HIGH!)
+  - Col offset 35 in controller frame buffer
+  - Rotation 1 → 320×170 landscape
+- Battery: GPIO 4 (ADC1_CH3) via 100k/100k divider → V_bat = ADC × 2 × (3.3/4095)
+- Buttons: GPIO 0 (BTN_LEFT → short=Space, long=cycle screen), GPIO 14 (BTN_RIGHT → short=Shift+Tab, long=cycle screen)
+- No PMU, no IMU, no touch, no charging detection (no VBUS GPIO exposed)
 
 ## Build / flash
 
+Default env is `tdisplay_s3`. Specify explicitly with `-e <env>`:
+
 ```bash
-pio run -d firmware                                       # build
-pio run -d firmware -t upload --upload-port /dev/ttyACM0  # flash (binary path uses USB JTAG)
+pio run -d firmware -e tdisplay_s3                                       # build
+pio run -d firmware -e tdisplay_s3 -t upload --upload-port /dev/ttyACM0  # flash
+pio run -d firmware -e waveshare_amoled_216 -t upload                    # other board
+```
+
+Or via the helper scripts:
+
+```bash
+./flash.sh                                # uses BOARD env var (default: tdisplay_s3)
+BOARD=waveshare_amoled_216 ./flash.sh
+./screenshot.sh                           # auto-detects panel dims from device
 ```
 
 `/home/hermann/.platformio/penv/bin/pio` if `pio` isn't on PATH.
@@ -49,14 +84,27 @@ The boot screen is `SCREEN_SPLASH` and only advances on a physical button press,
 
 ## Critical gotchas
 
+### AMOLED-specific (env `waveshare_amoled_216`)
+
 1. **CO5300 cannot rotate.** Its MADCTL only supports axis flips, not column/row exchange. Rotation is done by **CPU pixel remapping in `my_flush_cb`** in main.cpp. We use **PARTIAL render mode with strip rotation** (small 480×40 strips, fast). On rotation change → AMOLED brightness flash → force redraw.
-2. **OPI PSRAM** required: `board_build.arduino.memory_type = qio_opi` in platformio.ini. Without this, `MALLOC_CAP_SPIRAM` returns NULL and the screen is black.
-3. **pioarduino platform required.** GFX Library for Arduino needs Arduino Core 3.x (`esp32-hal-periman.h`), not the 2.x that standard `espressif32` ships. We pin `pioarduino/platform-espressif32` 55.03.38-1.
-4. **LVGL 9 font patching.** `lv_font_conv` outputs LVGL 8 format. Must remove `#if LVGL_VERSION_MAJOR >= 8` guards, drop `.cache` field, add `.release_glyph`, `.kerning`, `.static_bitmap`, `.fallback`, `.user_data`. Without patching, fonts render invisible.
-5. **Touch reading must be centralized.** CST9220's `getPoint()` does a full I2C transaction. Calling it from multiple places consumed each other's data and broke input. `touch_read()` is called once per loop in main.cpp; both LVGL `my_touch_cb` and `touch.cpp` read from shared `touch_pressed/touch_x/touch_y` state.
-6. **CO5300 needs even-aligned flush regions.** `rounder_cb` enforces this.
-7. **Touch `setSwapXY(true)` and `setMirrorXY(true, false)`** are the empirically-correct values for default rotation 0. IMU rotation logic doesn't change touch mapping (it does CPU-side rotation of the rendered pixels, so LVGL still thinks the display is portrait at 0°).
+2. **CO5300 needs even-aligned flush regions.** `rounder_cb` enforces this.
+3. **Touch reading must be centralized.** CST9220's `getPoint()` does a full I2C transaction. Calling it from multiple places consumed each other's data and broke input. `touch_read()` is called once per loop in main.cpp; both LVGL `my_touch_cb` and `touch.cpp` read from shared `touch_pressed/touch_x/touch_y` state.
+4. **Touch `setSwapXY(true)` and `setMirrorXY(true, false)`** are the empirically-correct values for default rotation 0. IMU rotation logic doesn't change touch mapping (it does CPU-side rotation of the rendered pixels, so LVGL still thinks the display is portrait at 0°).
+
+### T-Display S3-specific (env `tdisplay_s3`)
+
+1. **GPIO 15 LCD power.** Must `pinMode(15, OUTPUT); digitalWrite(15, HIGH);` BEFORE `gfx->begin()` or the panel stays dark. Easy to miss because `gfx->begin()` doesn't error out — it just sends commands into the void.
+2. **Column offset 35.** The ST7789 controller has a 240-wide frame buffer but the panel exposes only 170 columns starting at index 35. Pass `(col_offset1=35, row_offset1=0, col_offset2=35, row_offset2=0)` to the `Arduino_ST7789` constructor.
+3. **No charging detection.** No VBUS GPIO is exposed; `power_is_charging()` always returns false. The battery icon shows a level only, never the charging bolt.
+4. **No HID middle button.** With only 2 buttons (vs. 3 on AMOLED), short-press = HID key (Space / Shift+Tab), long-press (≥500 ms) on either button = cycle screen. Don't try to send HID on long-press — the short-press handler is gated on `!st->long_handled`.
+
+### Shared
+
+5. **OPI PSRAM** required on both boards: `board_build.arduino.memory_type = qio_opi`. Without this, `MALLOC_CAP_SPIRAM` returns NULL and LVGL buffers fail to allocate.
+6. **pioarduino platform required.** GFX Library for Arduino needs Arduino Core 3.x (`esp32-hal-periman.h`), not the 2.x that standard `espressif32` ships. We pin `pioarduino/platform-espressif32` 55.03.38-1.
+7. **LVGL 9 font patching.** `lv_font_conv` outputs LVGL 8 format. Must remove `#if LVGL_VERSION_MAJOR >= 8` guards, drop `.cache` field, add `.release_glyph`, `.kerning`, `.static_bitmap`, `.fallback`, `.user_data`. Without patching, fonts render invisible. (Only relevant when adding new custom fonts to `boards/amoled/`. The `tdisplay_s3` env uses LVGL's built-in Montserrat fonts to avoid this entirely.)
 8. **LVGL RGB565A8 is planar.** `w*h` RGB565 pixels followed by `w*h` alpha bytes; `data_size = w*h*3`, `stride = w*2`. Use `init_icon_dsc_rgb565a8()` for icons that overlap non-uniform backgrounds (e.g. battery over splash). Lucide source PNGs are black-on-transparent — converter must tint to white or icons render invisible. See `tools/png_to_lvgl.js`.
+9. **`splash.cpp` upscale is per-board.** Default `SPLASH_CELL=24` gives a 480×480 canvas; override with `-DSPLASH_CELL=8` for 160×160 (T-Display S3). The 20×20 source data is identical between boards — only the cell size changes.
 
 ## Icons
 

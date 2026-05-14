@@ -6,16 +6,19 @@
 #include <string.h>
 #include <esp_heap_caps.h>
 
-// 20x20 grid scaled 24x to fill 480x480
+// 20×20 pixel-art grid. CELL is the upscale factor — overridable per board
+// via build flag (e.g. -DSPLASH_CELL=8 for a 160×160 canvas on smaller
+// displays). Default 24× fills a 480×480 panel.
 #define GRID         20
-#define CELL         24
+#ifndef SPLASH_CELL
+#define SPLASH_CELL  24
+#endif
+#define CELL         SPLASH_CELL
 #define CANVAS_W     (GRID * CELL)
 #define CANVAS_H     (GRID * CELL)
 
 // Background fallback when palette is missing
 #define COL_EMPTY    0x0000  // true black (matches THEME_BG)
-
-LV_FONT_DECLARE(font_styrene_28);
 
 static lv_obj_t *splash_container = NULL;
 static lv_obj_t *canvas = NULL;
@@ -99,7 +102,10 @@ void splash_init(lv_obj_t *parent) {
     }
 
     splash_container = lv_obj_create(parent);
-    lv_obj_set_size(splash_container, 480, 480);
+    // Match the parent screen size so the splash overlay fully covers the
+    // background regardless of panel resolution. Canvas inside is fixed at
+    // GRID*CELL and centered by lv_obj_center() below.
+    lv_obj_set_size(splash_container, lv_obj_get_width(parent), lv_obj_get_height(parent));
     lv_obj_set_pos(splash_container, 0, 0);
     lv_obj_set_style_bg_color(splash_container, THEME_BG, 0);
     lv_obj_set_style_bg_opa(splash_container, LV_OPA_COVER, 0);
@@ -117,7 +123,7 @@ void splash_init(lv_obj_t *parent) {
         "no animations loaded\n\n"
         "run tools/scrape_claudepix.js\n"
         "then tools/convert_to_c.js");
-    lv_obj_set_style_text_font(label_status, &font_styrene_28, 0);
+    lv_obj_set_style_text_font(label_status, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(label_status, lv_color_hex(0xb0aea5), 0);
     lv_obj_set_style_text_align(label_status, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_center(label_status);
