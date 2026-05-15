@@ -2,33 +2,36 @@
 
 A small ESP32 dashboard that sits on your desk and keeps an eye on Claude
 Code usage. It connects to a host daemon over BLE, the daemon polls the
-Anthropic API every 60 s, and the device renders session + weekly usage,
-reset timers, and a pixel-art Clawd that gets busier as your usage rate
-climbs. Two side buttons send keyboard shortcuts back over BLE HID for
-Claude Code's voice mode and mode toggle.
+Anthropic API every 60 s, and the device renders session / weekly /
+context-window usage, reset timers, a clock screen for idle time, and a
+pixel-art Clawd that gets busier as your usage rate climbs. Two side
+buttons send keyboard shortcuts back over BLE HID for Claude Code's
+voice mode and mode toggle.
 
 > **Fork of [HermannBjorgvin/Clawdmeter](https://github.com/HermannBjorgvin/Clawdmeter)**
 > by [@hermannbjorgvin](https://github.com/HermannBjorgvin) — the
 > original targets the Waveshare ESP32-S3-Touch-AMOLED-2.16. This fork
-> adds support for the **LilyGO T-Display S3** (1.9" 170×320 ST7789, two
-> buttons, no touch/IMU/PMU) and a **celebration animation** that fires
-> whenever Claude Code finishes a response.
+> adds support for the **LilyGO T-Display S3** (1.9" 170×320 ST7789 in
+> portrait, two buttons, no touch/IMU/PMU), a **Context-window usage
+> bar** fed by a Stop-hook integration, a **Clock screen** as boot
+> default with idle auto-switching, and a **celebration animation**
+> that fires whenever Claude Code finishes a response.
 
 ## Two supported boards
 
 | Board                                | PlatformIO env             | Display                          | Inputs                           | Battery / PMU              |
 | ------------------------------------ | -------------------------- | -------------------------------- | -------------------------------- | -------------------------- |
 | Waveshare ESP32-S3-Touch-AMOLED-2.16 | `waveshare_amoled_216`     | 480×480 AMOLED (CO5300 QSPI)     | Cap-touch + 3 buttons + IMU      | AXP2101 + Li-Po            |
-| **LilyGO T-Display S3**              | `tdisplay_s3` *(this fork)*| 320×170 IPS (ST7789 8-bit i80)   | 2 buttons (short = HID, long = cycle) | ADC battery, no charge sense |
+| **LilyGO T-Display S3**              | `tdisplay_s3` *(this fork)*| 170×320 IPS (ST7789 8-bit i80, portrait) | 2 buttons (short = HID, long = cycle) | ADC battery, no charge sense |
 
 The two boards share BLE, daemon, splash data, usage-rate logic, and
 theming. The display drivers, layouts, fonts, and power paths live under
 `firmware/src/boards/<name>/` and are selected by `build_src_filter` per
 env.
 
-|              T-Display S3 — Usage              |              Celebration on prompt-ready              |
-| :--------------------------------------------: | :---------------------------------------------------: |
-| ![T-Display Usage](screenshots/tdisplay-usage.png) | ![Celebration](screenshots/tdisplay-celebration.png) |
+|              T-Display S3 — Clock              |              T-Display S3 — Usage              |              Celebration on prompt-ready              |
+| :--------------------------------------------: | :--------------------------------------------: | :---------------------------------------------------: |
+| ![T-Display Clock](screenshots/tdisplay-clock.png) | ![T-Display Usage](screenshots/tdisplay-usage.png) | ![Celebration](screenshots/tdisplay-celebration.png)  |
 
 |              AMOLED — Splash               |              AMOLED — Usage              |                AMOLED — Bluetooth                |
 | :----------------------------------------: | :--------------------------------------: | :----------------------------------------------: |
@@ -40,16 +43,17 @@ sprites.
 
 ## Screens
 
-Both builds expose three screens:
-
-- **Usage** — session + weekly percentages, reset times, animated Claude Code-style "doing thing" message.
+- **Usage** — session / weekly / context-window percentages with reset times and a `Xk / Yk` absolute token figure under the Context bar. Animated Claude Code-style "doing thing" message at the bottom.
+- **Clock** *(T-Display S3 only)* — wall-clock time and date, with a larger animated Clawd that tracks the current usage-rate group. Boot default; the screen auto-switches to Usage on the first Stop hook / activity event, and returns to Clock after 5 min of inactivity.
 - **Bluetooth** — connection state, device name, MAC address.
 - **Splash** — full-screen pixel-art Clawd, auto-rotating across animations within the current usage-rate group.
 
 On the **AMOLED** build the middle (PWR) button cycles between Usage and
 Bluetooth; tapping the screen flips into and out of the splash. On the
 **T-Display S3** build (no touch, no third button), long-pressing either
-side button (≥500 ms) cycles Usage → Bluetooth → Splash → Usage.
+side button (≥500 ms) cycles Usage → Clock → Bluetooth → Splash → Usage.
+Manual cycling pauses the idle auto-switch for 2 min so a chosen screen
+stays put.
 
 ## Prerequisites
 
@@ -149,9 +153,16 @@ Add a `Stop` hook to `~/.claude/settings.json`:
 }
 ```
 
-The hook sends `SIGUSR1` to the running daemon; the daemon writes a tiny
-`{"e":"done"}` event over BLE; the firmware plays the animation. Sub-second
-latency end to end. No-op if the daemon isn't running.
+The hook also reads the Claude Code session transcript to extract the
+current in-context-window token count, then sends `SIGUSR1` to the
+running daemon. The daemon writes a `{"e":"done","c":N,"cm":200000,
+"p":"project / branch"}` event over BLE; the firmware plays a
+celebration splash for ~6 seconds, updates the Context-bar figure on
+the Usage screen, and flips Clock → Usage if the device was idling on
+the clock. Sub-second latency end to end. No-op if the daemon isn't
+running. `SubagentStop` events are filtered by the hook so Task-spawned
+sub-agent transcripts don't overwrite the main session's context
+figure.
 
 > Wired on the `tdisplay_s3` firmware. The AMOLED build has a no-op
 > `ui_celebrate()` stub — mirroring the tdisplay state machine in
@@ -194,16 +205,26 @@ keyboard service:
 Two payload shapes are accepted on the RX characteristic:
 
 ```json
-// Usage update
-{ "s": 45, "sr": 120, "w": 28, "wr": 7200, "st": "allowed", "ok": true }
+// Usage update (poll loop, every 60 s)
+{ "s": 45, "sr": 120, "w": 28, "wr": 7200,
+  "st": "allowed", "ok": true,
+  "t": 1778864145, "tz": 120 }
 
-// Event (currently only "done" = Claude finished responding)
-{ "e": "done" }
+// Event (Claude Code Stop hook)
+{ "e": "done", "c": 157000, "cm": 200000, "p": "Clawdmeter / main" }
 ```
 
 Usage fields: `s` = session %, `sr` = session reset in minutes, `w` =
 weekly %, `wr` = weekly reset in minutes, `st` = status string, `ok` =
-success flag.
+success flag, `t` = epoch seconds (clock-screen sync), `tz` = local UTC
+offset in minutes.
+
+Event fields: `e` = event name (`"done"` when Claude has finished
+responding), `c` = current in-context-window tokens (sum of `input` +
+`cache_creation` + `cache_read` from the latest assistant turn in the
+session transcript), `cm` = context-window max (defaults to `200000`;
+override via the daemon's `CONTEXT_MAX` env var), `p` = "project /
+branch" label derived from the hook's `cwd` + `git rev-parse`.
 
 ## QA your own UI changes
 
@@ -290,8 +311,9 @@ pio run -d firmware -e tdisplay_s3 -t upload
 
 The upscale factor is per-board: AMOLED renders 20×20 grids at 24× into
 its 480×480 canvas; T-Display S3 renders the same grids at 8× into a
-160×160 canvas centred on its 320×170 screen. Both are driven by the
-same `splash_animations.h`, with `-DSPLASH_CELL=N` selecting the scale.
+160×160 canvas centred on its 170×320 portrait screen. Both are driven
+by the same `splash_animations.h`, with `-DSPLASH_CELL=N` selecting the
+scale.
 
 See `tools/README.md` for details.
 
