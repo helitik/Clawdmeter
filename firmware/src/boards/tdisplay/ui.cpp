@@ -48,9 +48,6 @@ static lv_obj_t* lbl_ctx_pct   = NULL;
 static lv_obj_t* bar_ctx       = NULL;
 static lv_obj_t* lbl_ctx_abs   = NULL;
 static uint32_t  last_ctx_max  = 200000;  // sane default until the daemon supplies one
-// Project + branch label shown below the Context bar (e.g. "Clawdmeter /
-// tdisplay-portrait"). Wraps to two lines on narrow screens.
-static lv_obj_t* lbl_project   = NULL;
 
 // ---- Bluetooth screen widgets ----
 static lv_obj_t* ble_container;
@@ -82,18 +79,27 @@ static uint32_t clock_last_render_min = UINT32_MAX;
 static uint32_t last_activity_ms = 0;
 static uint32_t manual_override_until_ms = 0;
 
-// ---- Title-bar Clawd logo (animated 20×20 pixel-art) ----
+// ---- Title-bar Clawd logo (animated 20×20 pixel-art, upscaled) ----
 // Buffer must outlive the canvas, so it's static. The canvas widget is kept
 // so we can invalidate it whenever splash_mini_tick advances a frame.
-#define LOGO_SIZE 20
+#define LOGO_SIZE         20
+#define HEADER_LOGO_SCALE 2
+#define HEADER_LOGO_SIZE  (LOGO_SIZE * HEADER_LOGO_SCALE)  // 40 px — give Clawd
+                                                           // more presence in the
+                                                           // portrait header band
 #define CLOCK_LOGO_SCALE 4
 #define CLOCK_LOGO_SIZE  (LOGO_SIZE * CLOCK_LOGO_SCALE)   // 80 px — Clawd dominates
                                                           // the clock screen as a
                                                           // visual focal point
-static uint16_t logo_buf[LOGO_SIZE * LOGO_SIZE];
+static uint16_t logo_buf[HEADER_LOGO_SIZE * HEADER_LOGO_SIZE];
 static uint16_t clock_logo_buf[CLOCK_LOGO_SIZE * CLOCK_LOGO_SIZE];
 static lv_obj_t* logo_canvas = NULL;
 static splash_mini_state_t logo_state;
+// Rate-group tracking for the title-bar Clawd so the pictogram swaps
+// animation as the user's session intensity climbs — same cadence as the
+// fullscreen splash and the clock-screen Clawd.
+static int      logo_last_rate_group = -1;
+static uint32_t logo_anim_rotated_ms = 0;
 
 // ---- Battery symbol (top-right) ----
 // Hidden by default on T-Display S3 (no charge-status pin, often USB-powered,
@@ -194,48 +200,39 @@ static void init_usage_screen(lv_obj_t* scr) {
     lv_obj_clear_flag(usage_container, LV_OBJ_FLAG_SCROLLABLE);
 
     // Animated Clawd pictogram next to the title — reuses splash animation
-    // frame data via splash_mini_*. Animation index 0 is the first entry in
-    // splash_anims[] (typically a calm "idle breathe"), which is what we
-    // want for a title-bar accent.
+    // frame data via splash_mini_*. Upscaled to 40×40 so it carries more
+    // weight in the portrait header band.
     logo_canvas = lv_canvas_create(usage_container);
-    lv_canvas_set_buffer(logo_canvas, logo_buf, LOGO_SIZE, LOGO_SIZE, LV_COLOR_FORMAT_RGB565);
-    splash_mini_init(&logo_state, 0, logo_buf);
-    lv_obj_set_pos(logo_canvas, MARGIN, 1);
+    lv_canvas_set_buffer(logo_canvas, logo_buf, HEADER_LOGO_SIZE, HEADER_LOGO_SIZE,
+                         LV_COLOR_FORMAT_RGB565);
+    splash_mini_init_scaled(&logo_state, 0, logo_buf, HEADER_LOGO_SCALE);
+    lv_obj_set_pos(logo_canvas, MARGIN, 8);
 
     lbl_title = lv_label_create(usage_container);
     lv_label_set_text(lbl_title, "Usage");
-    lv_obj_set_style_text_font(lbl_title, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(lbl_title, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(lbl_title, COL_TEXT, 0);
-    lv_obj_set_pos(lbl_title, MARGIN + LOGO_SIZE + 6, 4);
+    // Vertically centered against the 40 px logo (y=8..48 → mid≈28). The 20pt
+    // font is ~22 px tall, so a top offset of 18 lines up the text's optical
+    // center with the logo's.
+    lv_obj_set_pos(lbl_title, MARGIN + HEADER_LOGO_SIZE + 10, 18);
 
-    // Three stacked metric rows. Each row is ~46 px tall (label/pct top,
-    // bar at +22, footer text at +34). Rows are spaced 64 px apart to give
-    // each block its own visual band on the 320-tall portrait screen.
-    make_metric_row(usage_container, 44, "Session",
+    // Three stacked metric rows. Bigger header pushes the first row down to
+    // y=68 (clearing the 48 px logo zone with a small gap), and the spacing
+    // is widened to 72 px for a more breathable layout.
+    make_metric_row(usage_container, 68, "Session",
                     &lbl_session_label, &lbl_session_pct,
                     &bar_session, &lbl_session_reset);
 
-    make_metric_row(usage_container, 108, "Weekly",
+    make_metric_row(usage_container, 140, "Weekly",
                     &lbl_weekly_label, &lbl_weekly_pct,
                     &bar_weekly, &lbl_weekly_reset);
 
     // Context row: same layout as Session/Weekly but the footer slot shows
     // "150k / 200k" instead of a reset countdown. Initial bar is grey.
-    make_metric_row(usage_container, 172, "Context",
+    make_metric_row(usage_container, 212, "Context",
                     &lbl_ctx_label, &lbl_ctx_pct,
                     &bar_ctx, &lbl_ctx_abs);
-
-    // Project + branch label, ~24 px under the Context footer. Wraps to a
-    // second line when the project name + branch don't fit on one row at
-    // 170 px wide. Centered, dim accent so it doesn't fight the bars above.
-    lbl_project = lv_label_create(usage_container);
-    lv_label_set_text(lbl_project, "");
-    lv_obj_set_style_text_font(lbl_project, &lv_font_montserrat_12, 0);
-    lv_obj_set_style_text_color(lbl_project, COL_DIM, 0);
-    lv_obj_set_style_text_align(lbl_project, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_set_width(lbl_project, SCR_W - 2 * MARGIN);
-    lv_label_set_long_mode(lbl_project, LV_LABEL_LONG_WRAP);
-    lv_obj_set_pos(lbl_project, MARGIN, 232);
 
     // Animated word ribbon at the bottom of the screen.
     lbl_anim = lv_label_create(usage_container);
@@ -243,7 +240,7 @@ static void init_usage_screen(lv_obj_t* scr) {
     lv_obj_set_style_text_font(lbl_anim, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(lbl_anim, COL_ACCENT, 0);
     lv_obj_set_style_text_align(lbl_anim, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(lbl_anim, LV_ALIGN_BOTTOM_MID, 0, -12);
+    lv_obj_align(lbl_anim, LV_ALIGN_BOTTOM_MID, 0, -16);
 }
 
 static void init_bluetooth_screen(lv_obj_t* scr) {
@@ -388,28 +385,8 @@ void ui_note_activity(void) {
 }
 
 void ui_set_project_info(const char* text) {
-    if (!lbl_project) return;
-    if (!text || !*text) {
-        lv_label_set_text(lbl_project, "");
-        return;
-    }
-
-    // Swap the " / " separator (used by the hook for readability in JSON
-    // and logs) for a hard newline so the project name and branch land on
-    // separate lines — LV_LABEL_LONG_WRAP otherwise breaks mid-word on
-    // "tdisplay-portrait" which looks bad. Buffer is sized for typical
-    // project+branch combinations; longer strings just keep the " / ".
-    char buf[80];
-    const char* sep = strstr(text, " / ");
-    if (sep && (size_t)(sep - text) < sizeof(buf) - 2) {
-        size_t lead = (size_t)(sep - text);
-        memcpy(buf, text, lead);
-        buf[lead] = '\n';
-        strlcpy(buf + lead + 1, sep + 3, sizeof(buf) - lead - 1);
-        lv_label_set_text(lbl_project, buf);
-    } else {
-        lv_label_set_text(lbl_project, text);
-    }
+    (void)text;  // no-op — the project/branch label was too busy in the layout
+                 // and rolled back; signature kept so main.cpp still compiles.
 }
 
 void ui_set_context_tokens(uint32_t tokens, uint32_t max_tokens) {
@@ -551,7 +528,26 @@ void ui_tick_anim(void) {
         snprintf(buf, sizeof(buf), "%s ...", anim_messages[anim_msg_idx]);
         lv_label_set_text(lbl_anim, buf);
     }
-    if (logo_canvas && splash_mini_tick(&logo_state, logo_buf)) {
+
+    // Track the same rate group as the fullscreen splash + clock Clawd.
+    // splash_pick_index_for_rate() returns the next anim index inside the
+    // current group (with the existing 20s rotation cadence).
+    int rg = usage_rate_group();
+    bool rate_changed = (rg != logo_last_rate_group);
+    bool rotate_due   = (now - logo_anim_rotated_ms) >= CLOCK_ANIM_ROTATE_MS;
+    if ((rate_changed || rotate_due) && logo_canvas) {
+        int idx = splash_pick_index_for_rate();
+        if (idx >= 0) {
+            splash_mini_init_scaled(&logo_state, (uint16_t)idx,
+                                    logo_buf, HEADER_LOGO_SCALE);
+            lv_obj_invalidate(logo_canvas);
+        }
+        logo_last_rate_group = rg;
+        logo_anim_rotated_ms = now;
+    }
+
+    if (logo_canvas &&
+        splash_mini_tick_scaled(&logo_state, logo_buf, HEADER_LOGO_SCALE)) {
         lv_obj_invalidate(logo_canvas);
     }
 }
