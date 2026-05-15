@@ -1,15 +1,21 @@
 #include "ui.h"
 #include "splash.h"
+#include "usage_rate.h"
 #include <lvgl.h>
 #include <Arduino.h>
 #include <time.h>
 #include "theme.h"
 
-// 320×170 landscape layout. Uses LVGL's built-in Montserrat fonts and
-// FontAwesome symbol subset — no custom font_*.c files to regenerate.
+// How often the clock screen swaps to a new animation within the current
+// rate group, matching the fullscreen splash's auto-rotate cadence.
+#define CLOCK_ANIM_ROTATE_MS 20000
 
-#define SCR_W      320
-#define SCR_H      170
+// 170×320 portrait layout (rotation 2, USB connector at top). Uses LVGL's
+// built-in Montserrat fonts and FontAwesome symbol subset — no custom
+// font_*.c files to regenerate.
+
+#define SCR_W      170
+#define SCR_H      320
 #define MARGIN     10
 
 #define COL_BG       THEME_BG
@@ -34,7 +40,14 @@ static lv_obj_t* lbl_weekly_pct;
 static lv_obj_t* bar_weekly;
 static lv_obj_t* lbl_weekly_reset;
 static lv_obj_t* lbl_anim;
-static lv_obj_t* lbl_context = NULL;
+// Context-window metric row (third bar under Session/Weekly). Populated by
+// the Stop hook → daemon → BLE pipeline; widgets stay at "--%" / blank until
+// the first event arrives.
+static lv_obj_t* lbl_ctx_label = NULL;
+static lv_obj_t* lbl_ctx_pct   = NULL;
+static lv_obj_t* bar_ctx       = NULL;
+static lv_obj_t* lbl_ctx_abs   = NULL;
+static uint32_t  last_ctx_max  = 200000;  // sane default until the daemon supplies one
 
 // ---- Bluetooth screen widgets ----
 static lv_obj_t* ble_container;
@@ -49,6 +62,8 @@ static lv_obj_t* lbl_clock_time = NULL;
 static lv_obj_t* lbl_clock_date = NULL;
 static lv_obj_t* lbl_clock_msg = NULL;
 static splash_mini_state_t clock_logo_state;
+static int      clock_last_rate_group = -1;
+static uint32_t clock_anim_rotated_ms = 0;
 
 // Clock-sync state. epoch_at_sync is *already* timezone-shifted to local
 // seconds-since-epoch so gmtime_r() yields local wall-clock values without
@@ -63,19 +78,33 @@ static uint32_t clock_last_render_min = UINT32_MAX;
 #define MANUAL_OVERRIDE_MS     (2UL * 60UL * 1000UL)  // 2 minutes
 static uint32_t last_activity_ms = 0;
 static uint32_t manual_override_until_ms = 0;
+// Gates the Clock→Usage auto-switch so a fresh boot stays on the Clock
+// until something has actually happened (Stop hook fire, rate-group rise).
+// Once flipped to true it never resets — the timer-based USAGE→Clock idle
+// switch handles "session ended" the same way as before.
+static bool     activity_seen = false;
 
-// ---- Title-bar Clawd logo (animated 20×20 pixel-art) ----
+// ---- Title-bar Clawd logo (animated 20×20 pixel-art, upscaled) ----
 // Buffer must outlive the canvas, so it's static. The canvas widget is kept
 // so we can invalidate it whenever splash_mini_tick advances a frame.
-#define LOGO_SIZE 20
+#define LOGO_SIZE         20
+#define HEADER_LOGO_SCALE 2
+#define HEADER_LOGO_SIZE  (LOGO_SIZE * HEADER_LOGO_SCALE)  // 40 px — give Clawd
+                                                           // more presence in the
+                                                           // portrait header band
 #define CLOCK_LOGO_SCALE 4
 #define CLOCK_LOGO_SIZE  (LOGO_SIZE * CLOCK_LOGO_SCALE)   // 80 px — Clawd dominates
                                                           // the clock screen as a
                                                           // visual focal point
-static uint16_t logo_buf[LOGO_SIZE * LOGO_SIZE];
+static uint16_t logo_buf[HEADER_LOGO_SIZE * HEADER_LOGO_SIZE];
 static uint16_t clock_logo_buf[CLOCK_LOGO_SIZE * CLOCK_LOGO_SIZE];
 static lv_obj_t* logo_canvas = NULL;
 static splash_mini_state_t logo_state;
+// Rate-group tracking for the title-bar Clawd so the pictogram swaps
+// animation as the user's session intensity climbs — same cadence as the
+// fullscreen splash and the clock-screen Clawd.
+static int      logo_last_rate_group = -1;
+static uint32_t logo_anim_rotated_ms = 0;
 
 // ---- Battery symbol (top-right) ----
 // Hidden by default on T-Display S3 (no charge-status pin, often USB-powered,
@@ -176,46 +205,53 @@ static void init_usage_screen(lv_obj_t* scr) {
     lv_obj_clear_flag(usage_container, LV_OBJ_FLAG_SCROLLABLE);
 
     // Animated Clawd pictogram next to the title — reuses splash animation
-    // frame data via splash_mini_*. Animation index 0 is the first entry in
-    // splash_anims[] (typically a calm "idle breathe"), which is what we
-    // want for a title-bar accent.
+    // frame data via splash_mini_*. Upscaled to 40×40 so it carries more
+    // weight in the portrait header band.
     logo_canvas = lv_canvas_create(usage_container);
-    lv_canvas_set_buffer(logo_canvas, logo_buf, LOGO_SIZE, LOGO_SIZE, LV_COLOR_FORMAT_RGB565);
-    splash_mini_init(&logo_state, 0, logo_buf);
-    lv_obj_set_pos(logo_canvas, MARGIN, 1);
+    lv_canvas_set_buffer(logo_canvas, logo_buf, HEADER_LOGO_SIZE, HEADER_LOGO_SIZE,
+                         LV_COLOR_FORMAT_RGB565);
+    splash_mini_init_scaled(&logo_state, 0, logo_buf, HEADER_LOGO_SCALE);
+    lv_obj_set_pos(logo_canvas, MARGIN, 8);
 
     lbl_title = lv_label_create(usage_container);
     lv_label_set_text(lbl_title, "Usage");
-    lv_obj_set_style_text_font(lbl_title, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(lbl_title, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(lbl_title, COL_TEXT, 0);
-    lv_obj_set_pos(lbl_title, MARGIN + LOGO_SIZE + 6, 4);
+    // Vertically centered against the 40 px logo (y=8..48 → mid≈28). The 20pt
+    // font is ~22 px tall, so a top offset of 18 lines up the text's optical
+    // center with the logo's.
+    lv_obj_set_pos(lbl_title, MARGIN + HEADER_LOGO_SIZE + 10, 18);
 
-    // Session @ y=26 (label/pct/bar/reset total height ~50 px)
-    make_metric_row(usage_container, 26, "Session",
+    // Three stacked metric rows. Bigger header pushes the first row down to
+    // y=68 (clearing the 48 px logo zone with a small gap), and the spacing
+    // is widened to 72 px for a more breathable layout.
+    make_metric_row(usage_container, 68, "Session",
                     &lbl_session_label, &lbl_session_pct,
                     &bar_session, &lbl_session_reset);
 
-    // Weekly @ y=84
-    make_metric_row(usage_container, 84, "Weekly",
+    make_metric_row(usage_container, 140, "Weekly",
                     &lbl_weekly_label, &lbl_weekly_pct,
                     &bar_weekly, &lbl_weekly_reset);
 
-    // Bottom message ribbon
+    // Context row: same layout as Session/Weekly but the footer slot shows
+    // "150k / 200k" instead of a reset countdown. Hidden until the first
+    // ui_set_context_tokens() call — pre-Stop-hook the figure would be a
+    // misleading "--%" on a fresh boot with no active Claude session.
+    make_metric_row(usage_container, 212, "Context",
+                    &lbl_ctx_label, &lbl_ctx_pct,
+                    &bar_ctx, &lbl_ctx_abs);
+    lv_obj_add_flag(lbl_ctx_label, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(lbl_ctx_pct,   LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(bar_ctx,       LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(lbl_ctx_abs,   LV_OBJ_FLAG_HIDDEN);
+
+    // Animated word ribbon at the bottom of the screen.
     lbl_anim = lv_label_create(usage_container);
     lv_label_set_text(lbl_anim, "");
     lv_obj_set_style_text_font(lbl_anim, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(lbl_anim, COL_ACCENT, 0);
-    lv_obj_align(lbl_anim, LV_ALIGN_BOTTOM_LEFT, MARGIN, -2);
-
-    // Context-tokens indicator on the same baseline as lbl_anim, right side.
-    // Populated by the Stop hook → daemon → BLE pipeline; stays blank until
-    // the first event arrives. Slightly larger font (18 vs the 14 of the
-    // playful word) so the figure pops as the "main metric".
-    lbl_context = lv_label_create(usage_container);
-    lv_label_set_text(lbl_context, "");
-    lv_obj_set_style_text_font(lbl_context, &lv_font_montserrat_18, 0);
-    lv_obj_set_style_text_color(lbl_context, COL_DIM, 0);
-    lv_obj_align(lbl_context, LV_ALIGN_BOTTOM_RIGHT, -MARGIN, -2);
+    lv_obj_set_style_text_align(lbl_anim, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(lbl_anim, LV_ALIGN_BOTTOM_MID, 0, -16);
 }
 
 static void init_bluetooth_screen(lv_obj_t* scr) {
@@ -237,19 +273,26 @@ static void init_bluetooth_screen(lv_obj_t* scr) {
     lv_label_set_text(lbl_ble_status, "Initializing...");
     lv_obj_set_style_text_font(lbl_ble_status, &lv_font_montserrat_20, 0);
     lv_obj_set_style_text_color(lbl_ble_status, COL_DIM, 0);
-    lv_obj_set_pos(lbl_ble_status, MARGIN, 30);
+    lv_obj_set_pos(lbl_ble_status, MARGIN, 50);
 
+    // Device + MAC labels wrap their values to a second line — at 170 px wide
+    // a full MAC string "AA:BB:CC:DD:EE:FF" in Montserrat 12 won't fit on the
+    // same row as the "MAC: " prefix, so we let it wrap naturally.
     lbl_ble_device = lv_label_create(ble_container);
     lv_label_set_text(lbl_ble_device, "Device: ---");
     lv_obj_set_style_text_font(lbl_ble_device, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(lbl_ble_device, COL_DIM, 0);
-    lv_obj_set_pos(lbl_ble_device, MARGIN, 64);
+    lv_obj_set_pos(lbl_ble_device, MARGIN, 120);
+    lv_obj_set_width(lbl_ble_device, SCR_W - 2 * MARGIN);
+    lv_label_set_long_mode(lbl_ble_device, LV_LABEL_LONG_WRAP);
 
     lbl_ble_mac = lv_label_create(ble_container);
     lv_label_set_text(lbl_ble_mac, "MAC: ---");
     lv_obj_set_style_text_font(lbl_ble_mac, &lv_font_montserrat_12, 0);
     lv_obj_set_style_text_color(lbl_ble_mac, COL_DIM, 0);
-    lv_obj_set_pos(lbl_ble_mac, MARGIN, 82);
+    lv_obj_set_pos(lbl_ble_mac, MARGIN, 170);
+    lv_obj_set_width(lbl_ble_mac, SCR_W - 2 * MARGIN);
+    lv_label_set_long_mode(lbl_ble_mac, LV_LABEL_LONG_WRAP);
 
     lv_obj_add_flag(ble_container, LV_OBJ_FLAG_HIDDEN);
 }
@@ -263,36 +306,33 @@ static void init_clock_screen(lv_obj_t* scr) {
     lv_obj_set_style_pad_all(clock_container, 0, 0);
     lv_obj_clear_flag(clock_container, LV_OBJ_FLAG_SCROLLABLE);
 
-    // Animated Clawd at 4× upscale (80×80), centered vertically. Positioned
-    // so that Clawd + the time digits form a roughly-centered group on the
-    // 320 px wide screen (≈42 px outer margin on either side).
+    // Portrait layout: Clawd up top, big time below, date, then animated
+    // word at the bottom — vertically stacked and horizontally centered.
     clock_logo_canvas = lv_canvas_create(clock_container);
     lv_canvas_set_buffer(clock_logo_canvas, clock_logo_buf,
                          CLOCK_LOGO_SIZE, CLOCK_LOGO_SIZE, LV_COLOR_FORMAT_RGB565);
     splash_mini_init_scaled(&clock_logo_state, 0, clock_logo_buf, CLOCK_LOGO_SCALE);
-    lv_obj_align(clock_logo_canvas, LV_ALIGN_LEFT_MID, 28, 0);
+    lv_obj_align(clock_logo_canvas, LV_ALIGN_TOP_MID, 0, 24);
 
-    // Big HH:MM next to Clawd. Y-offset shifts the time down slightly so
-    // its visual centre aligns with Clawd's visible body (Clawd's head sits
-    // near the top of its 80×80 canvas, so the body's optical centre is
-    // below the canvas midpoint).
+    // Big HH:MM directly under Clawd. The 48 px font is ~50 px tall, so the
+    // baseline ends near y=180 — leaves room for the date strip below.
     lbl_clock_time = lv_label_create(clock_container);
     lv_label_set_text(lbl_clock_time, "--:--");
     lv_obj_set_style_text_font(lbl_clock_time, &lv_font_montserrat_48, 0);
     lv_obj_set_style_text_color(lbl_clock_time, COL_TEXT, 0);
-    lv_obj_align(lbl_clock_time, LV_ALIGN_RIGHT_MID, -28, -10);
+    lv_obj_set_style_text_align(lbl_clock_time, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(lbl_clock_time, LV_ALIGN_TOP_MID, 0, 130);
 
-    // Date underneath the time, right-aligned to match.
+    // Date strip under the time.
     lbl_clock_date = lv_label_create(clock_container);
     lv_label_set_text(lbl_clock_date, "");
     lv_obj_set_style_text_font(lbl_clock_date, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(lbl_clock_date, COL_DIM, 0);
-    lv_obj_align(lbl_clock_date, LV_ALIGN_RIGHT_MID, -28, 32);
+    lv_obj_set_style_text_align(lbl_clock_date, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_align(lbl_clock_date, LV_ALIGN_TOP_MID, 0, 198);
 
-    // Playful "Musing..." / "Vibing..." word under the Clawd, cycling in
-    // sync with the Usage screen's spinner message. The label centre is
-    // pinned to the canvas centre (x = 28 offset + half of 80 = 68), one
-    // line below the canvas bottom.
+    // Playful "Musing..." / "Vibing..." word at the bottom, cycling in sync
+    // with the Usage screen's spinner message.
     lbl_clock_msg = lv_label_create(clock_container);
     {
         char seed[40];
@@ -302,8 +342,7 @@ static void init_clock_screen(lv_obj_t* scr) {
     lv_obj_set_style_text_font(lbl_clock_msg, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(lbl_clock_msg, COL_ACCENT, 0);
     lv_obj_set_style_text_align(lbl_clock_msg, LV_TEXT_ALIGN_CENTER, 0);
-    lv_obj_align(lbl_clock_msg, LV_ALIGN_LEFT_MID, 68, 54);
-    lv_obj_set_style_translate_x(lbl_clock_msg, LV_PCT(-50), 0);
+    lv_obj_align(lbl_clock_msg, LV_ALIGN_BOTTOM_MID, 0, -16);
 
     lv_obj_add_flag(clock_container, LV_OBJ_FLAG_HIDDEN);
 }
@@ -354,18 +393,45 @@ void ui_set_clock_time(uint32_t epoch_seconds, int tz_offset_min) {
 
 void ui_note_activity(void) {
     last_activity_ms = millis();
+    activity_seen = true;
 }
 
-void ui_set_context_tokens(uint32_t tokens) {
-    if (!lbl_context) return;
-    char buf[16];
-    if (tokens >= 1000) {
-        // "84k", "551k" — readable at a glance, model-agnostic.
-        snprintf(buf, sizeof(buf), "%luk", (unsigned long)(tokens / 1000));
-    } else {
-        snprintf(buf, sizeof(buf), "%lu", (unsigned long)tokens);
+void ui_set_project_info(const char* text) {
+    (void)text;  // no-op — the project/branch label was too busy in the layout
+                 // and rolled back; signature kept so main.cpp still compiles.
+}
+
+void ui_set_context_tokens(uint32_t tokens, uint32_t max_tokens) {
+    if (!bar_ctx) return;
+    if (max_tokens > 0) last_ctx_max = max_tokens;
+
+    // First valid payload reveals the row (hidden at boot to avoid a
+    // misleading "--%" before any Claude session has run).
+    if (tokens > 0) {
+        lv_obj_clear_flag(lbl_ctx_label, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(lbl_ctx_pct,   LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(bar_ctx,       LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(lbl_ctx_abs,   LV_OBJ_FLAG_HIDDEN);
     }
-    lv_label_set_text(lbl_context, buf);
+
+    // Compute % of context used. Clamp to [0..100] so the bar never
+    // overflows even if a future model reports more than the cached max.
+    uint32_t pct_u = (last_ctx_max > 0)
+        ? (uint32_t)((uint64_t)tokens * 100 / last_ctx_max) : 0;
+    if (pct_u > 100) pct_u = 100;
+    int pct = (int)pct_u;
+
+    lv_label_set_text_fmt(lbl_ctx_pct, "%d%%", pct);
+    lv_bar_set_value(bar_ctx, pct, LV_ANIM_ON);
+    lv_obj_set_style_bg_color(bar_ctx, pct_color((float)pct), LV_PART_INDICATOR);
+
+    // Footer: "150k / 200k" — readable at a glance, model-agnostic. Round
+    // to the nearest thousand so the figure stays compact in the 150-px row.
+    char buf[24];
+    unsigned long cur_k = ((unsigned long)tokens + 500) / 1000;
+    unsigned long max_k = ((unsigned long)last_ctx_max + 500) / 1000;
+    snprintf(buf, sizeof(buf), "%luk / %luk", cur_k, max_k);
+    lv_label_set_text(lbl_ctx_abs, buf);
 }
 
 void ui_init(void) {
@@ -427,7 +493,10 @@ void ui_tick_anim(void) {
         bool idle = (now - last_activity_ms) >= IDLE_SWITCH_MS;
         if (idle && current_screen == SCREEN_USAGE && clock_synced) {
             ui_show_screen(SCREEN_CLOCK);
-        } else if (!idle && current_screen == SCREEN_CLOCK) {
+        } else if (!idle && activity_seen && current_screen == SCREEN_CLOCK) {
+            // Only auto-flip Clock→Usage once we've seen at least one
+            // activity event — otherwise a fresh boot with no Claude session
+            // running would jump straight to a useless Usage screen.
             ui_show_screen(SCREEN_USAGE);
         }
     }
@@ -445,9 +514,26 @@ void ui_tick_anim(void) {
 
     // Clock screen tick: re-render time/date once per minute (gated by
     // clock_last_render_min), advance the animated Clawd, refresh the
-    // rotating word beneath the Clawd when it ticks.
+    // rotating word beneath the Clawd when it ticks. Also swap the Clawd
+    // animation to track the current usage rate group (idle/normal/active/
+    // heavy) — same rotation cadence as the fullscreen splash.
     if (current_screen == SCREEN_CLOCK) {
         clock_render(false);
+
+        int rg = usage_rate_group();
+        bool rate_changed = (rg != clock_last_rate_group);
+        bool rotate_due   = (now - clock_anim_rotated_ms) >= CLOCK_ANIM_ROTATE_MS;
+        if ((rate_changed || rotate_due) && clock_logo_canvas) {
+            int idx = splash_pick_index_for_rate();
+            if (idx >= 0) {
+                splash_mini_init_scaled(&clock_logo_state, (uint16_t)idx,
+                                        clock_logo_buf, CLOCK_LOGO_SCALE);
+                lv_obj_invalidate(clock_logo_canvas);
+            }
+            clock_last_rate_group = rg;
+            clock_anim_rotated_ms = now;
+        }
+
         if (clock_logo_canvas &&
             splash_mini_tick_scaled(&clock_logo_state, clock_logo_buf, CLOCK_LOGO_SCALE)) {
             lv_obj_invalidate(clock_logo_canvas);
@@ -466,7 +552,26 @@ void ui_tick_anim(void) {
         snprintf(buf, sizeof(buf), "%s ...", anim_messages[anim_msg_idx]);
         lv_label_set_text(lbl_anim, buf);
     }
-    if (logo_canvas && splash_mini_tick(&logo_state, logo_buf)) {
+
+    // Track the same rate group as the fullscreen splash + clock Clawd.
+    // splash_pick_index_for_rate() returns the next anim index inside the
+    // current group (with the existing 20s rotation cadence).
+    int rg = usage_rate_group();
+    bool rate_changed = (rg != logo_last_rate_group);
+    bool rotate_due   = (now - logo_anim_rotated_ms) >= CLOCK_ANIM_ROTATE_MS;
+    if ((rate_changed || rotate_due) && logo_canvas) {
+        int idx = splash_pick_index_for_rate();
+        if (idx >= 0) {
+            splash_mini_init_scaled(&logo_state, (uint16_t)idx,
+                                    logo_buf, HEADER_LOGO_SCALE);
+            lv_obj_invalidate(logo_canvas);
+        }
+        logo_last_rate_group = rg;
+        logo_anim_rotated_ms = now;
+    }
+
+    if (logo_canvas &&
+        splash_mini_tick_scaled(&logo_state, logo_buf, HEADER_LOGO_SCALE)) {
         lv_obj_invalidate(logo_canvas);
     }
 }

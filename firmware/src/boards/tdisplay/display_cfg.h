@@ -6,12 +6,13 @@
 // ST7789 1.9" 170×320 via 8-bit i80 parallel bus.
 // Reference: https://github.com/Xinyuan-LilyGO/T-Display-S3
 
-// Native panel orientation is portrait 170×320. We rotate to landscape in
-// software via Arduino_GFX::setRotation(1) → 320×170 effective.
+// Native panel orientation is portrait 170×320. We use rotation 2 (flipped
+// portrait, USB connector at the top of the device); effective size stays
+// 170×320.
 #define LCD_NATIVE_W   170
 #define LCD_NATIVE_H   320
-#define LCD_WIDTH      320   // after rotation 1
-#define LCD_HEIGHT     170
+#define LCD_WIDTH      170   // after rotation 2 (still portrait)
+#define LCD_HEIGHT     320
 
 // ST7789 control pins
 #define LCD_CS         6
@@ -34,9 +35,11 @@
 #define LCD_BL         38
 #define LCD_POWER_ON   15   // must drive HIGH to enable LCD 3v3 rail
 
-// Physical buttons
-#define BTN_LEFT       0    // BOOT/KEY0 — left of the screen in landscape
-#define BTN_RIGHT      14   // KEY1 — right of the screen in landscape
+// Physical buttons. With USB at the top (rotation 2), the buttons are on
+// the bottom edge of the device; "LEFT" / "RIGHT" still refer to their
+// physical position on the PCB silkscreen so the HID mapping stays intuitive.
+#define BTN_LEFT       0    // BOOT/KEY0
+#define BTN_RIGHT      14   // KEY1
 
 // Battery sense: GPIO 4 (ADC1_CH3), 100k/100k divider on board
 #define BAT_ADC_PIN    4

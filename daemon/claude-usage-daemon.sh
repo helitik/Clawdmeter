@@ -17,6 +17,13 @@ REFRESH_FLAG="/tmp/claude-usage-refresh-$$"
 # count here right before signalling us. We read + clear it on USR1 so
 # the BLE event payload can include the value alongside "e":"done".
 CONTEXT_FILE="/tmp/clawdmeter-context.txt"
+# Project + branch label, written by the Stop hook. Kept across signals
+# so every "done" event carries it (so the device re-syncs after reboot).
+PROJECT_FILE="/tmp/clawdmeter-project.txt"
+# Max context window the firmware should size its usage bar against. Claude
+# Sonnet/Opus 4.x default to 200k; bump this to 1000000 if you're running
+# Claude Code with the 1M-context beta header.
+CONTEXT_MAX=${CONTEXT_MAX:-200000}
 # Daemon PID is published here so the Claude Code Stop hook can signal us
 # (SIGUSR1) to push a celebration event to the device with sub-second
 # latency. See daemon/hooks/claude-stop.sh.
@@ -351,7 +358,17 @@ while true; do
                 CTX=$(cat "$CONTEXT_FILE" 2>/dev/null | tr -dc '0-9')
                 rm -f "$CONTEXT_FILE"
                 if [ -n "$CTX" ] && [ "$CTX" -gt 0 ] 2>/dev/null; then
-                    CTX_PAYLOAD="{\"e\":\"done\",\"c\":$CTX}"
+                    # Optional project/branch label (kept across hooks, max
+                    # 50 chars, strip quotes/backslashes to keep JSON sane).
+                    PRJ_FIELD=""
+                    if [ -f "$PROJECT_FILE" ]; then
+                        PRJ=$(head -c 50 "$PROJECT_FILE" 2>/dev/null \
+                              | tr -d '\n\r"\\')
+                        [ -n "$PRJ" ] && PRJ_FIELD=",\"p\":\"$PRJ\""
+                    fi
+                    # Include "cm" so the firmware can size its context bar
+                    # without baking the model's max into the build.
+                    CTX_PAYLOAD="{\"e\":\"done\",\"c\":$CTX,\"cm\":$CONTEXT_MAX${PRJ_FIELD}}"
                 fi
             fi
             log "Stop hook fired -> $CTX_PAYLOAD"

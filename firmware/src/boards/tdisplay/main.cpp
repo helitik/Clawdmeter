@@ -18,7 +18,7 @@ Arduino_DataBus *bus = new Arduino_ESP32LCD8(
     LCD_D4, LCD_D5, LCD_D6, LCD_D7);
 
 Arduino_GFX *gfx = new Arduino_ST7789(
-    bus, LCD_RST, 1 /* rotation: 1 = landscape 320×170 */, true /* IPS */,
+    bus, LCD_RST, 2 /* rotation: 2 = portrait 170×320, USB connector at top */, true /* IPS */,
     LCD_NATIVE_W, LCD_NATIVE_H,
     LCD_COL_OFFSET, LCD_ROW_OFFSET, LCD_COL_OFFSET, LCD_ROW_OFFSET);
 
@@ -61,9 +61,16 @@ static void on_ble_data(const char* json) {
         return;
     }
 
-    // Optional context-token count piggy-backed on any payload.
-    uint32_t ctx_tokens = doc["c"] | (uint32_t)0;
-    if (ctx_tokens > 0) ui_set_context_tokens(ctx_tokens);
+    // Optional context-token count piggy-backed on any payload. `cm` is the
+    // model's context-window max (e.g. 200000) — passed alongside `c` so the
+    // firmware can render the bar without baking the limit into the build.
+    uint32_t ctx_tokens = doc["c"]  | (uint32_t)0;
+    uint32_t ctx_max    = doc["cm"] | (uint32_t)0;
+    if (ctx_tokens > 0) ui_set_context_tokens(ctx_tokens, ctx_max);
+
+    // Optional project + branch label ("Clawdmeter / tdisplay-portrait").
+    const char* prj = doc["p"] | (const char*)nullptr;
+    if (prj && *prj) ui_set_project_info(prj);
 
     const char* event = doc["e"] | (const char*)nullptr;
     if (event && *event) {
@@ -192,7 +199,11 @@ void setup() {
     ui_init();
     ui_update_ble_status(ble_get_state(), ble_get_device_name(), ble_get_mac_address());
     ui_update_battery(power_battery_pct(), power_is_charging());
-    ui_show_screen(SCREEN_USAGE);
+    // Boot to the Clock — Usage only makes sense once a Claude session is
+    // running (context bar would be empty, session/weekly bars at 0%). The
+    // auto-switch in ui_tick_anim flips to Usage on the first ui_note_activity()
+    // call (Stop hook or rate-group rise) and back to Clock after 5 min idle.
+    ui_show_screen(SCREEN_CLOCK);
 
     Serial.println("Ready, advertising as 'Claude Controller'");
 }

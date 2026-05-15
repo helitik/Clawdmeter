@@ -37,5 +37,12 @@ void ui_note_activity(void);
 // Update the on-screen indicator showing how many tokens are currently in
 // Claude Code's context window. Driven by the Stop hook, which reads the
 // session transcript and sums the latest turn's input + cache_creation +
-// cache_read counters.
-void ui_set_context_tokens(uint32_t tokens);
+// cache_read counters. `max_tokens` is the model's full context window
+// (typically 200 000) — used to render a usage bar alongside the figure.
+// Pass `max_tokens == 0` to leave the previous max in place.
+void ui_set_context_tokens(uint32_t tokens, uint32_t max_tokens);
+
+// Set the project / branch label shown under the Context bar. Typically
+// "Clawdmeter / tdisplay-portrait" — basename of cwd + git branch from the
+// Stop hook. Empty / NULL clears the label.
+void ui_set_project_info(const char* text);

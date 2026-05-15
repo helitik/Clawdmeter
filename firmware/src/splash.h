@@ -21,6 +21,13 @@ void splash_hide(void);
 // trigger a re-pick when the rate group changes mid-display.
 void splash_pick_for_current_rate(void);
 
+// Return the next animation index for the current usage-rate group, without
+// touching the fullscreen splash state. Round-robins through the group's
+// animations and bumps its internal rotation counter, so calling this from
+// e.g. the clock screen's mini-canvas advances the same rotation the
+// fullscreen splash uses. Returns -1 if no animations are loaded.
+int splash_pick_index_for_rate(void);
+
 // Switch to a random energetic animation from the celebration pool and
 // show the splash overlay. ui_celebrate() owns the timing — splash is
 // purely the animation pick + canvas reveal.

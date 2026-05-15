@@ -5,6 +5,7 @@
 #include <Arduino.h>
 #include <string.h>
 #include <esp_heap_caps.h>
+#include <esp_random.h>
 
 // 20×20 pixel-art grid. CELL is the upscale factor — overridable per board
 // via build flag (e.g. -DSPLASH_CELL=8 for a 160×160 canvas on smaller
@@ -57,13 +58,20 @@ static const char* GROUP_NAMES[GROUP_COUNT][GROUP_MAX] = {
 // Celebration pool — picked at random by splash_play_celebration() when the
 // host signals that Claude finished responding. Energetic dance/surprise
 // animations to make the device feel alive at the moment of attention.
-#define CELEBRATION_MAX 5
+// Mix of DJ / dance / expression to avoid the previous DJ-heavy bias where
+// 3/5 entries had "dj" in the name.
+#define CELEBRATION_MAX 8
 static const char* CELEBRATION_NAMES[CELEBRATION_MAX] = {
-    "dance bounce dj", "dance sway dj", "dance djmix",
-    "expression surprise", "dance bounce",
+    "dance bounce", "dance sway", "dance bounce dj",
+    "dance sway dj", "dance djmix",
+    "expression surprise", "expression wink",
+    "work coding",
 };
 static int8_t  celebration_pool[CELEBRATION_MAX];
 static uint8_t celebration_pool_size = 0;
+// Anti-repeat guard: re-roll if we'd play the same animation twice in a
+// row. Cleared at boot so the first celebration is unconstrained.
+static int8_t  last_celebration_idx  = -1;
 
 static void resolve_celebration_pool(void) {
     celebration_pool_size = 0;
@@ -141,12 +149,11 @@ void splash_init(lv_obj_t *parent) {
 
     canvas = lv_canvas_create(splash_container);
     lv_canvas_set_buffer(canvas, canvas_buf, CANVAS_W, CANVAS_H, LV_COLOR_FORMAT_RGB565);
-    // Bottom-align (vs. centered) gives more breathing room above the character.
-    // Some animations (e.g. the "dj" variants with overhead headphones) draw
-    // into row 0 of the 20×20 grid; centered placement made them sit flush
-    // against the top edge. Idle anims have an empty row 19, so anchoring the
-    // canvas to the screen bottom doesn't crowd the legs.
-    lv_obj_align(canvas, LV_ALIGN_BOTTOM_MID, 0, 0);
+    // Center the canvas in its container. On AMOLED the canvas (480×480) fills
+    // the screen so alignment is moot; on T-Display S3 portrait (170×320, canvas
+    // 160×160) centering gives equal breathing room above the dj-headphone
+    // rows and below the legs, vs. bottom-align which left the top half blank.
+    lv_obj_center(canvas);
 
     // Placeholder label (visible only when no animations are loaded)
     label_status = lv_label_create(splash_container);
@@ -204,15 +211,22 @@ void splash_next(void) {
     Serial.printf("splash: -> %s\n", a->name);
 }
 
-void splash_pick_for_current_rate(void) {
-    if (SPLASH_ANIM_COUNT == 0) return;
+// Bumps the current rate-group's rotation counter and returns the next
+// animation index, or -1 if no animations are loaded. Shared by the
+// fullscreen splash and the clock-screen mini canvas so they round-robin
+// through the same group rotation.
+static int8_t pick_next_for_rate(void) {
+    if (SPLASH_ANIM_COUNT == 0) return -1;
     int g = usage_rate_group();
     if (g < 0 || g >= GROUP_COUNT) g = 0;
-    if (group_size[g] == 0) return;
-
+    if (group_size[g] == 0) return -1;
     uint8_t slot = group_rotation[g] % group_size[g];
     group_rotation[g]++;
-    int8_t idx = group_lists[g][slot];
+    return group_lists[g][slot];
+}
+
+void splash_pick_for_current_rate(void) {
+    int8_t idx = pick_next_for_rate();
     if (idx < 0) return;
 
     cur_anim = (uint16_t)idx;
@@ -221,6 +235,11 @@ void splash_pick_for_current_rate(void) {
     last_pick_ms = frame_started_ms;
     const splash_anim_def_t *a = &splash_anims[cur_anim];
     render_frame(a->frames[0], a->palette);
+}
+
+int splash_pick_index_for_rate(void) {
+    int8_t idx = pick_next_for_rate();
+    return (idx < 0) ? -1 : (int)idx;
 }
 
 bool splash_is_active(void) { return active; }
@@ -242,10 +261,18 @@ lv_obj_t* splash_get_root(void) {
 
 void splash_play_celebration(void) {
     if (SPLASH_ANIM_COUNT == 0 || celebration_pool_size == 0) return;
-    uint32_t r = millis() ^ (millis() >> 16);
-    uint8_t slot = (uint8_t)(r % celebration_pool_size);
-    int8_t idx = celebration_pool[slot];
+    // Hardware RNG via esp_random() — much better than millis()-aliased
+    // pseudo-random for back-to-back celebrations (which previously kept
+    // landing on the same animation when fired a few seconds apart).
+    int8_t idx = -1;
+    for (int tries = 0; tries < 6; tries++) {
+        uint8_t slot = (uint8_t)(esp_random() % celebration_pool_size);
+        idx = celebration_pool[slot];
+        if (idx < 0) continue;
+        if (idx != last_celebration_idx || celebration_pool_size <= 1) break;
+    }
     if (idx < 0) return;
+    last_celebration_idx = idx;
     cur_anim = (uint16_t)idx;
     cur_frame = 0;
     frame_started_ms = millis();
