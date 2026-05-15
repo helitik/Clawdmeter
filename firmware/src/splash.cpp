@@ -5,6 +5,7 @@
 #include <Arduino.h>
 #include <string.h>
 #include <esp_heap_caps.h>
+#include <esp_random.h>
 
 // 20×20 pixel-art grid. CELL is the upscale factor — overridable per board
 // via build flag (e.g. -DSPLASH_CELL=8 for a 160×160 canvas on smaller
@@ -57,13 +58,20 @@ static const char* GROUP_NAMES[GROUP_COUNT][GROUP_MAX] = {
 // Celebration pool — picked at random by splash_play_celebration() when the
 // host signals that Claude finished responding. Energetic dance/surprise
 // animations to make the device feel alive at the moment of attention.
-#define CELEBRATION_MAX 5
+// Mix of DJ / dance / expression to avoid the previous DJ-heavy bias where
+// 3/5 entries had "dj" in the name.
+#define CELEBRATION_MAX 8
 static const char* CELEBRATION_NAMES[CELEBRATION_MAX] = {
-    "dance bounce dj", "dance sway dj", "dance djmix",
-    "expression surprise", "dance bounce",
+    "dance bounce", "dance sway", "dance bounce dj",
+    "dance sway dj", "dance djmix",
+    "expression surprise", "expression wink",
+    "work coding",
 };
 static int8_t  celebration_pool[CELEBRATION_MAX];
 static uint8_t celebration_pool_size = 0;
+// Anti-repeat guard: re-roll if we'd play the same animation twice in a
+// row. Cleared at boot so the first celebration is unconstrained.
+static int8_t  last_celebration_idx  = -1;
 
 static void resolve_celebration_pool(void) {
     celebration_pool_size = 0;
@@ -253,10 +261,18 @@ lv_obj_t* splash_get_root(void) {
 
 void splash_play_celebration(void) {
     if (SPLASH_ANIM_COUNT == 0 || celebration_pool_size == 0) return;
-    uint32_t r = millis() ^ (millis() >> 16);
-    uint8_t slot = (uint8_t)(r % celebration_pool_size);
-    int8_t idx = celebration_pool[slot];
+    // Hardware RNG via esp_random() — much better than millis()-aliased
+    // pseudo-random for back-to-back celebrations (which previously kept
+    // landing on the same animation when fired a few seconds apart).
+    int8_t idx = -1;
+    for (int tries = 0; tries < 6; tries++) {
+        uint8_t slot = (uint8_t)(esp_random() % celebration_pool_size);
+        idx = celebration_pool[slot];
+        if (idx < 0) continue;
+        if (idx != last_celebration_idx || celebration_pool_size <= 1) break;
+    }
     if (idx < 0) return;
+    last_celebration_idx = idx;
     cur_anim = (uint16_t)idx;
     cur_frame = 0;
     frame_started_ms = millis();
