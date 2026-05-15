@@ -199,7 +199,11 @@ void setup() {
     ui_init();
     ui_update_ble_status(ble_get_state(), ble_get_device_name(), ble_get_mac_address());
     ui_update_battery(power_battery_pct(), power_is_charging());
-    ui_show_screen(SCREEN_USAGE);
+    // Boot to the Clock — Usage only makes sense once a Claude session is
+    // running (context bar would be empty, session/weekly bars at 0%). The
+    // auto-switch in ui_tick_anim flips to Usage on the first ui_note_activity()
+    // call (Stop hook or rate-group rise) and back to Clock after 5 min idle.
+    ui_show_screen(SCREEN_CLOCK);
 
     Serial.println("Ready, advertising as 'Claude Controller'");
 }

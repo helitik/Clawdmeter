@@ -78,6 +78,11 @@ static uint32_t clock_last_render_min = UINT32_MAX;
 #define MANUAL_OVERRIDE_MS     (2UL * 60UL * 1000UL)  // 2 minutes
 static uint32_t last_activity_ms = 0;
 static uint32_t manual_override_until_ms = 0;
+// Gates the Clock→Usage auto-switch so a fresh boot stays on the Clock
+// until something has actually happened (Stop hook fire, rate-group rise).
+// Once flipped to true it never resets — the timer-based USAGE→Clock idle
+// switch handles "session ended" the same way as before.
+static bool     activity_seen = false;
 
 // ---- Title-bar Clawd logo (animated 20×20 pixel-art, upscaled) ----
 // Buffer must outlive the canvas, so it's static. The canvas widget is kept
@@ -229,10 +234,16 @@ static void init_usage_screen(lv_obj_t* scr) {
                     &bar_weekly, &lbl_weekly_reset);
 
     // Context row: same layout as Session/Weekly but the footer slot shows
-    // "150k / 200k" instead of a reset countdown. Initial bar is grey.
+    // "150k / 200k" instead of a reset countdown. Hidden until the first
+    // ui_set_context_tokens() call — pre-Stop-hook the figure would be a
+    // misleading "--%" on a fresh boot with no active Claude session.
     make_metric_row(usage_container, 212, "Context",
                     &lbl_ctx_label, &lbl_ctx_pct,
                     &bar_ctx, &lbl_ctx_abs);
+    lv_obj_add_flag(lbl_ctx_label, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(lbl_ctx_pct,   LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(bar_ctx,       LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(lbl_ctx_abs,   LV_OBJ_FLAG_HIDDEN);
 
     // Animated word ribbon at the bottom of the screen.
     lbl_anim = lv_label_create(usage_container);
@@ -382,6 +393,7 @@ void ui_set_clock_time(uint32_t epoch_seconds, int tz_offset_min) {
 
 void ui_note_activity(void) {
     last_activity_ms = millis();
+    activity_seen = true;
 }
 
 void ui_set_project_info(const char* text) {
@@ -392,6 +404,15 @@ void ui_set_project_info(const char* text) {
 void ui_set_context_tokens(uint32_t tokens, uint32_t max_tokens) {
     if (!bar_ctx) return;
     if (max_tokens > 0) last_ctx_max = max_tokens;
+
+    // First valid payload reveals the row (hidden at boot to avoid a
+    // misleading "--%" before any Claude session has run).
+    if (tokens > 0) {
+        lv_obj_clear_flag(lbl_ctx_label, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(lbl_ctx_pct,   LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(bar_ctx,       LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(lbl_ctx_abs,   LV_OBJ_FLAG_HIDDEN);
+    }
 
     // Compute % of context used. Clamp to [0..100] so the bar never
     // overflows even if a future model reports more than the cached max.
@@ -472,7 +493,10 @@ void ui_tick_anim(void) {
         bool idle = (now - last_activity_ms) >= IDLE_SWITCH_MS;
         if (idle && current_screen == SCREEN_USAGE && clock_synced) {
             ui_show_screen(SCREEN_CLOCK);
-        } else if (!idle && current_screen == SCREEN_CLOCK) {
+        } else if (!idle && activity_seen && current_screen == SCREEN_CLOCK) {
+            // Only auto-flip Clock→Usage once we've seen at least one
+            // activity event — otherwise a fresh boot with no Claude session
+            // running would jump straight to a useless Usage screen.
             ui_show_screen(SCREEN_USAGE);
         }
     }
