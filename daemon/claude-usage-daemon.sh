@@ -2,7 +2,7 @@
 # Claude Usage Tracker Daemon (BLE)
 # Reads Claude Code OAuth token, polls usage via API, sends to ESP32 over BLE GATT.
 # Auto-connects and reconnects to the Claude Controller BLE device.
-# Dependencies: curl, awk, bluetoothctl
+# Dependencies: curl, awk, bluetoothctl, python3
 
 DEVICE_NAME="Claude Controller"
 DEVICE_MAC="${DEVICE_MAC:-}"  # auto-discovered if empty
@@ -37,7 +37,17 @@ log() {
 }
 
 read_token() {
-    grep -o '"accessToken":"[^"]*"' "$HOME/.claude/.credentials.json" | cut -d'"' -f4
+    # Must target claudeAiOauth.accessToken specifically. A naive grep over
+    # all "accessToken" fields also picks up mcpOAuth entries (Notion,
+    # Figma, Sentry), then bash command substitution joins them with
+    # newlines and the resulting Authorization header smuggles \n chars,
+    # which makes Anthropic's API return cryptic 400s (e.g. "char 4
+    # unexpected content after document") instead of working.
+    python3 -c 'import json,os,sys
+try:
+    print(json.load(open(os.path.expanduser("~/.claude/.credentials.json")))["claudeAiOauth"]["accessToken"])
+except Exception as e:
+    sys.exit(1)' 2>/dev/null
 }
 
 # Convert MAC to D-Bus path: AA:BB:CC:DD:EE:FF -> dev_AA_BB_CC_DD_EE_FF
@@ -248,6 +258,12 @@ poll() {
         -H "User-Agent: claude-code/2.1.5" \
         -d '{"model":"claude-haiku-4-5-20251001","max_tokens":1,"messages":[{"role":"user","content":"hi"}]}' \
         2>/dev/null) || { log "Error: API call failed"; return 1; }
+
+    local http_status
+    http_status=$(echo "$headers" | awk 'NR==1 {print $2}')
+    if [ "$http_status" != "200" ]; then
+        log "Warn: API returned HTTP $http_status (expected rate-limit headers absent)"
+    fi
 
     local s5h_util s5h_reset s7d_util s7d_reset status
     s5h_util=$(echo "$headers" | grep -i "anthropic-ratelimit-unified-5h-utilization" | tr -d '\r' | awk '{print $2}')
