@@ -339,7 +339,7 @@ static void init_clock_screen(lv_obj_t* scr) {
         snprintf(seed, sizeof(seed), "%s ...", anim_messages[anim_msg_idx]);
         lv_label_set_text(lbl_clock_msg, seed);
     }
-    lv_obj_set_style_text_font(lbl_clock_msg, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(lbl_clock_msg, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(lbl_clock_msg, COL_ACCENT, 0);
     lv_obj_set_style_text_align(lbl_clock_msg, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(lbl_clock_msg, LV_ALIGN_BOTTOM_MID, 0, -16);
