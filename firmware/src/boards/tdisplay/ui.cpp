@@ -166,18 +166,18 @@ static void make_metric_row(lv_obj_t* parent, int y, const char* label_text,
                             lv_obj_t** out_bar, lv_obj_t** out_reset) {
     *out_label = lv_label_create(parent);
     lv_label_set_text(*out_label, label_text);
-    lv_obj_set_style_text_font(*out_label, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(*out_label, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(*out_label, COL_DIM, 0);
     lv_obj_set_pos(*out_label, MARGIN, y);
 
     *out_pct = lv_label_create(parent);
     lv_label_set_text(*out_pct, "--%");
-    lv_obj_set_style_text_font(*out_pct, &lv_font_montserrat_20, 0);
+    lv_obj_set_style_text_font(*out_pct, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_color(*out_pct, COL_TEXT, 0);
-    lv_obj_align(*out_pct, LV_ALIGN_TOP_RIGHT, -MARGIN, y - 2);
+    lv_obj_align(*out_pct, LV_ALIGN_TOP_RIGHT, -MARGIN, y - 4);
 
     *out_bar = lv_bar_create(parent);
-    lv_obj_set_pos(*out_bar, MARGIN, y + 22);
+    lv_obj_set_pos(*out_bar, MARGIN, y + 30);
     lv_obj_set_size(*out_bar, SCR_W - 2 * MARGIN, 8);
     lv_bar_set_range(*out_bar, 0, 100);
     lv_bar_set_value(*out_bar, 0, LV_ANIM_OFF);
@@ -190,9 +190,9 @@ static void make_metric_row(lv_obj_t* parent, int y, const char* label_text,
 
     *out_reset = lv_label_create(parent);
     lv_label_set_text(*out_reset, "---");
-    lv_obj_set_style_text_font(*out_reset, &lv_font_montserrat_12, 0);
+    lv_obj_set_style_text_font(*out_reset, &lv_font_montserrat_14, 0);
     lv_obj_set_style_text_color(*out_reset, COL_DIM, 0);
-    lv_obj_set_pos(*out_reset, MARGIN, y + 34);
+    lv_obj_set_pos(*out_reset, MARGIN, y + 42);
 }
 
 static void init_usage_screen(lv_obj_t* scr) {
@@ -248,7 +248,7 @@ static void init_usage_screen(lv_obj_t* scr) {
     // Animated word ribbon at the bottom of the screen.
     lbl_anim = lv_label_create(usage_container);
     lv_label_set_text(lbl_anim, "");
-    lv_obj_set_style_text_font(lbl_anim, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_font(lbl_anim, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(lbl_anim, COL_ACCENT, 0);
     lv_obj_set_style_text_align(lbl_anim, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_align(lbl_anim, LV_ALIGN_BOTTOM_MID, 0, -16);
