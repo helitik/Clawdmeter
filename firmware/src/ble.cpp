@@ -107,7 +107,7 @@ class ReqCallbacks : public NimBLECharacteristicCallbacks {
 
 void ble_init(void) {
     NimBLEDevice::init(DEVICE_NAME);
-    NimBLEDevice::setSecurityAuth(false, false, false);  // open: payload is non-sensitive (usage %), and bonding caused asymmetric host/firmware state after failed pairings
+    NimBLEDevice::setSecurityAuth(true, false, true);  // bonding, no MITM, SC -- required by the HID keyboard service; daemon no longer wipes the host bond, so asymmetric state shouldn't recur
 
     // Format MAC address
     NimBLEAddress addr = NimBLEDevice::getAddress();
