@@ -9,7 +9,8 @@
 #include "splash.h"
 #include "usage_rate.h"
 
-#define LONG_PRESS_MS  500
+#define LONG_PRESS_MS       500
+#define BLE_RESET_PRESS_MS  3500   // LEFT held this long → wipe BLE bonds
 
 // ---- Hardware objects ----
 Arduino_DataBus *bus = new Arduino_ESP32LCD8(
@@ -215,12 +216,15 @@ struct ButtonState {
     bool     was_pressed;
     uint32_t press_start_ms;
     bool     long_handled;
+    bool     reset_handled;
 };
-static ButtonState btn_left  = {false, 0, false};
-static ButtonState btn_right = {false, 0, false};
+static ButtonState btn_left  = {false, 0, false, false};
+static ButtonState btn_right = {false, 0, false, false};
 
 // Poll a single button. `hid_key`/`hid_mod` are sent on short press release.
-// On long-press while held, ui_cycle_screen() is invoked once.
+// On long-press while held, ui_cycle_screen() is invoked once. On LEFT
+// only, keeping it held past BLE_RESET_PRESS_MS wipes the NimBLE bonds
+// and restarts advertising (emergency recovery from a wedged pairing).
 static void poll_button(ButtonState* st, int pin, uint8_t hid_key, uint8_t hid_mod) {
     bool now_pressed = (digitalRead(pin) == LOW);
     uint32_t now = millis();
@@ -229,11 +233,17 @@ static void poll_button(ButtonState* st, int pin, uint8_t hid_key, uint8_t hid_m
         // Edge: just pressed
         st->press_start_ms = now;
         st->long_handled = false;
+        st->reset_handled = false;
     } else if (now_pressed && st->was_pressed) {
         // Still held — fire long-press once threshold crossed
         if (!st->long_handled && (now - st->press_start_ms) >= LONG_PRESS_MS) {
             st->long_handled = true;
             ui_cycle_screen();
+        }
+        if (pin == BTN_LEFT && !st->reset_handled
+            && (now - st->press_start_ms) >= BLE_RESET_PRESS_MS) {
+            st->reset_handled = true;
+            ble_clear_bonds();
         }
     } else if (!now_pressed && st->was_pressed) {
         // Edge: just released
