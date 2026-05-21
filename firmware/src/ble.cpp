@@ -107,7 +107,7 @@ class ReqCallbacks : public NimBLECharacteristicCallbacks {
 
 void ble_init(void) {
     NimBLEDevice::init(DEVICE_NAME);
-    NimBLEDevice::setSecurityAuth(true, false, false);  // bonding, no MITM, legacy pairing (no SC). HID needs bonding, but SC + NimBLE + bluez triggers post-handshake disconnect loops on the HID profile that drag GATT down with them.
+    NimBLEDevice::setSecurityAuth(true, false, true);  // bonding, no MITM, Secure Connections. Legacy pairing was attempted but bluez no longer accepts it reliably on recent Linux; SC is the supported path.
 
     // Format MAC address
     NimBLEAddress addr = NimBLEDevice::getAddress();
