@@ -103,9 +103,12 @@ scan_for_device() {
     fi
 
     log "Scanning for '$DEVICE_NAME'..."
+    # 25s window: at low RSSI / slow advertising interval, the device may
+    # not show up in the first 8–15 seconds. Shorter scans silently fail
+    # and feed the connect-retry loop.
     bluetoothctl scan le &>/dev/null &
     local scan_pid=$!
-    sleep 8
+    sleep 25
     kill "$scan_pid" 2>/dev/null
     wait "$scan_pid" 2>/dev/null
 
@@ -119,12 +122,11 @@ scan_for_device() {
     return 1
 }
 
-# Connect to the device. Counts consecutive failures across calls; only
-# nukes the bluez bond after several attempts, so a normal device reboot
-# (which typically takes 1–2 connect retries to settle) preserves the
-# pairing and the host doesn't re-prompt to trust the device every time.
+# Connect to the device. Never auto-invalidates the bluez bond: doing so
+# unilaterally (the firmware can't be told to drop its side) creates an
+# asymmetric paired/unpaired state that the firmware silently refuses,
+# requiring a physical device reset to recover.
 CONNECT_FAIL_COUNT=0
-CONNECT_FAIL_LIMIT=5
 
 connect_device() {
     log "Connecting to $DEVICE_MAC..."
@@ -142,24 +144,7 @@ connect_device() {
     fi
 
     CONNECT_FAIL_COUNT=$((CONNECT_FAIL_COUNT + 1))
-    log "Connection failed ($CONNECT_FAIL_COUNT/$CONNECT_FAIL_LIMIT)"
-
-    if [ "$CONNECT_FAIL_COUNT" -lt "$CONNECT_FAIL_LIMIT" ]; then
-        # Likely the device is mid-reboot or transiently unavailable; keep
-        # the cached MAC + bluez bond so the next attempt is a silent
-        # re-connect, not a fresh pairing prompt.
-        return 1
-    fi
-
-    # Persistent failure: probably a hardware swap or a dead device.
-    # Drop the cache so the next scan re-discovers by name.
-    log "Repeated failures, invalidating cache + bluez bond"
-    if [ -f "$SAVED_MAC_FILE" ] && [ "$(cat "$SAVED_MAC_FILE")" = "$DEVICE_MAC" ]; then
-        rm -f "$SAVED_MAC_FILE"
-    fi
-    bluetoothctl remove "$DEVICE_MAC" &>/dev/null
-    DEVICE_MAC=""
-    CONNECT_FAIL_COUNT=0
+    log "Connection failed (attempt $CONNECT_FAIL_COUNT)"
     return 1
 }
 

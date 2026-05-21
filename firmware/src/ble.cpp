@@ -107,7 +107,7 @@ class ReqCallbacks : public NimBLECharacteristicCallbacks {
 
 void ble_init(void) {
     NimBLEDevice::init(DEVICE_NAME);
-    NimBLEDevice::setSecurityAuth(true, false, true);  // bonding, no MITM, SC
+    NimBLEDevice::setSecurityAuth(false, false, false);  // open: payload is non-sensitive (usage %), and bonding caused asymmetric host/firmware state after failed pairings
 
     // Format MAC address
     NimBLEAddress addr = NimBLEDevice::getAddress();
