@@ -107,7 +107,7 @@ class ReqCallbacks : public NimBLECharacteristicCallbacks {
 
 void ble_init(void) {
     NimBLEDevice::init(DEVICE_NAME);
-    NimBLEDevice::setSecurityAuth(true, false, true);  // bonding, no MITM, SC -- required by the HID keyboard service; daemon no longer wipes the host bond, so asymmetric state shouldn't recur
+    NimBLEDevice::setSecurityAuth(true, false, false);  // bonding, no MITM, legacy pairing (no SC). HID needs bonding, but SC + NimBLE + bluez triggers post-handshake disconnect loops on the HID profile that drag GATT down with them.
 
     // Format MAC address
     NimBLEAddress addr = NimBLEDevice::getAddress();
