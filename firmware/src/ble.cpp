@@ -70,13 +70,23 @@ static void start_advertising() {
 class ServerCallbacks : public NimBLEServerCallbacks {
     void onConnect(NimBLEServer* s, NimBLEConnInfo& info) override {
         state = BLE_STATE_CONNECTED;
-        Serial.printf("BLE: connected from %s\n", info.getAddress().toString().c_str());
+        Serial.printf("BLE: connected from %s (active=%u)\n",
+            info.getAddress().toString().c_str(),
+            (unsigned)s->getConnectedCount());
+        // Keep advertising while a connection slot is still free so a second
+        // central (the host daemon alongside the OS-held HID link) can
+        // discover and connect. NimBLE auto-stops advertising on each accept.
+        if (s->getConnectedCount() < CONFIG_BT_NIMBLE_MAX_CONNECTIONS) {
+            need_advertise = true;
+        }
     }
 
     void onDisconnect(NimBLEServer* s, NimBLEConnInfo& info, int reason) override {
-        state = BLE_STATE_DISCONNECTED;
+        // Only flip the UI state to DISCONNECTED when the last client leaves.
+        if (s->getConnectedCount() == 0) state = BLE_STATE_DISCONNECTED;
         need_advertise = true;
-        Serial.printf("BLE: disconnected (reason=%d)\n", reason);
+        Serial.printf("BLE: disconnected (reason=%d, remaining=%u)\n",
+            reason, (unsigned)s->getConnectedCount());
     }
 
 };
